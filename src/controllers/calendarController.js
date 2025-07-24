@@ -1,8 +1,8 @@
 const calendarService = require('../services/calendarService');
 const logModel = require('../models/logModel');
 
-// Sincronizar eventos do Calendar (REACTIVADO)
-exports.syncCalendar = async (req, res) => {
+// Sincronizar eventos do Calendar (todos os usuários)
+const syncCalendar = async (req, res) => {
   try {
     const resultado = await calendarService.syncCalendarEvents();
     res.json({
@@ -19,28 +19,38 @@ exports.syncCalendar = async (req, res) => {
   }
 };
 
-// Configurar webhook do Calendar para um usuário específico (REACTIVADO)
-exports.configurarWebhookCalendar = async (req, res) => {
+// Sincronizar eventos do Calendar para um usuário específico
+const syncCalendarPorUsuario = async (req, res) => {
   try {
-    const { email, webhookUrl } = req.body;
-
-    if (!email || !webhookUrl) {
-      return res.status(400).json({
-        erro: 'Email e webhookUrl são obrigatórios'
-      });
+    const email = req.params.email;
+    if (!email) {
+      return res.status(400).json({ erro: 'Email é obrigatório.' });
     }
-
-    const resultado = await calendarService.configurarWatchCalendar(email, webhookUrl);
+    const resultado = await calendarService.syncCalendarEventsPorUsuario(email);
     res.json({
       sucesso: true,
-      mensagem: 'Webhook do Calendar configurado com sucesso',
-      resultado
+      mensagem: `Sincronização do Calendar para ${email} realizada com sucesso`,
+      ...resultado
     });
   } catch (error) {
-    console.error('Erro ao configurar webhook do Calendar:', error);
-    res.status(500).json({
-      erro: 'Erro ao configurar webhook do Calendar',
-      detalhes: error.message
-    });
+    res.status(500).json({ erro: 'Erro ao sincronizar Calendar para o usuário', detalhes: error.message });
   }
+};
+
+// Webhook do Calendar
+const webhookCalendar = async (req, res) => {
+  try {
+    // Aqui você pode processar a notificação do Google Calendar
+    // Exemplo: logar o body recebido
+    console.log('Webhook do Calendar recebido:', req.body);
+    res.status(200).json({ recebido: true });
+  } catch (error) {
+    res.status(500).json({ erro: 'Falha ao processar webhook do Calendar', detalhes: error.message });
+  }
+};
+
+module.exports = {
+  syncCalendar,
+  syncCalendarPorUsuario,
+  webhookCalendar
 }; 
