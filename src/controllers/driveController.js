@@ -36,34 +36,29 @@ exports.syncDrive = async (req, res) => {
   }
 };
 
-// Configurar webhook do Drive para um usuário específico
+// Configurar webhook do Drive para todos os usuários do banco
 exports.configurarWebhookDrive = async (req, res) => {
   try {
-    const { email, webhookUrl } = req.body;
-    
-    if (!email || !webhookUrl) {
-      return res.status(400).json({ 
-        erro: 'Email e webhookUrl são obrigatórios' 
-      });
+    const userModel = require('../models/userModel');
+    const driveService = require('../services/driveService');
+    const webhookUrl = process.env.WEBHOOK_URL ? `${process.env.WEBHOOK_URL}/drive/webhook` : (req.body?.webhookUrl || null);
+    if (!webhookUrl) {
+      return res.status(400).json({ erro: 'webhookUrl não informado e WEBHOOK_URL não está configurado.' });
     }
-
-    console.log(`Configurando webhook do Drive para ${email} com URL: ${webhookUrl}`);
-
-    const resultado = await driveService.configurarWatchDrive(email, webhookUrl);
-    
-    console.log('Webhook configurado:', resultado);
-    
-    res.json({ 
-      sucesso: true, 
-      mensagem: 'Webhook do Drive configurado com sucesso!',
-      resultado 
-    });
+    const usuarios = await userModel.getAllUsers();
+    let total = 0;
+    let erros = [];
+    for (const usuario of usuarios) {
+      try {
+        await driveService.configurarWatchDrive(usuario.email, webhookUrl);
+        total++;
+      } catch (err) {
+        erros.push({ email: usuario.email, erro: err.message });
+      }
+    }
+    res.json({ sucesso: true, mensagem: `Webhooks do Drive configurados para ${total} usuários.`, erros });
   } catch (error) {
-    console.error('Erro ao configurar webhook do Drive:', error);
-    res.status(500).json({ 
-      erro: 'Falha ao configurar webhook do Drive', 
-      detalhes: error.message 
-    });
+    res.status(500).json({ erro: 'Falha ao configurar webhooks do Drive', detalhes: error.message });
   }
 };
 

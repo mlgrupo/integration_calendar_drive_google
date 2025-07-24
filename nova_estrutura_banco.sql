@@ -161,6 +161,7 @@ CREATE TABLE IF NOT EXISTS google.logs (
     detalhes TEXT,
     erro BOOLEAN DEFAULT FALSE,
     dados_raw JSONB,
+    status text,
     criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -172,6 +173,8 @@ CREATE TABLE IF NOT EXISTS google.logs_auditoria (
     detalhes TEXT,
     erro BOOLEAN DEFAULT FALSE,
     dados_raw JSONB,
+    status text,
+    descricao text,
     criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
