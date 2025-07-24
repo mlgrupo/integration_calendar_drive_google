@@ -2,6 +2,7 @@ const userModel = require('../models/userModel');
 const { google } = require('googleapis');
 const { getGoogleClient } = require('../config/google');
 const logModel = require('../models/logModel');
+const userService = require('../services/userService'); // Added userService import
 
 // Listar todos os usuários
 exports.listarUsuarios = async (req, res) => {
@@ -139,6 +140,29 @@ exports.buscarUsuariosWorkspace = async (req, res) => {
     res.status(500).json({ 
       erro: 'Falha ao buscar usuários do Google Workspace', 
       detalhes: error.message 
+    });
+  }
+};
+
+// Sincronizar todos os usuários do domínio Google Workspace para o banco
+const syncWorkspace = async (req, res) => {
+  try {
+    console.log('Sincronização de usuários do Workspace agendada (background)...');
+    // Responde imediatamente
+    res.status(202).json({ sucesso: true, mensagem: 'Sincronização de usuários do Workspace iniciada em background.' });
+    // Roda o fluxo em background
+    setImmediate(() => {
+      userService.syncUsers().then((result) => {
+        console.log('Sincronização de usuários do Workspace finalizada:', result);
+      }).catch((err) => {
+        console.error('Erro na sincronização de usuários em background:', err);
+      });
+    });
+  } catch (error) {
+    console.error('Erro ao sincronizar usuários:', error);
+    res.status(500).json({
+      erro: 'Erro ao sincronizar usuários',
+      detalhes: error.message
     });
   }
 };

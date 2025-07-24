@@ -6,26 +6,27 @@ const webhookDebug = require('../utils/webhookDebug');
 // Sincronizar arquivos e pastas do Drive
 const syncDrive = async (req, res) => {
   try {
-    console.log('Iniciando sincronização do Drive...');
-    
-    const resultado = await driveService.syncDriveFiles();
-    
-    // Registrar log de auditoria
-    await logModel.logAuditoria({
-      usuario_id: null,
-      acao: 'sync_drive',
-      recurso_tipo: 'drive',
-      recurso_id: 'all_users',
-      detalhes: `Sincronização do Drive executada: ${resultado.totalArquivos} arquivos, ${resultado.totalPastas} pastas`,
-      ip_origem: req.ip,
-      user_agent: req.get('User-Agent'),
-      timestamp_evento: new Date()
-    });
-
-    res.json({ 
-      sucesso: true, 
-      mensagem: 'Sincronização do Drive executada com sucesso!',
-      resultado 
+    console.log('Sincronização do Drive agendada (background)...');
+    // Responde imediatamente
+    res.status(202).json({ sucesso: true, mensagem: 'Sincronização do Drive iniciada em background.' });
+    // Roda o fluxo em background
+    setImmediate(async () => {
+      try {
+        const resultado = await driveService.syncDriveFiles();
+        await logModel.logAuditoria({
+          usuario_id: null,
+          acao: 'sync_drive',
+          recurso_tipo: 'drive',
+          recurso_id: 'all_users',
+          detalhes: `Sincronização do Drive executada: ${resultado.totalArquivos} arquivos, ${resultado.totalPastas} pastas`,
+          ip_origem: req.ip,
+          user_agent: req.get('User-Agent'),
+          timestamp_evento: new Date()
+        });
+        console.log('Sincronização do Drive finalizada:', resultado);
+      } catch (error) {
+        console.error('Erro na sincronização do Drive em background:', error);
+      }
     });
   } catch (error) {
     console.error('Erro ao sincronizar Drive:', error);

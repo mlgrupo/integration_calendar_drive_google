@@ -10,13 +10,13 @@ const SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
 const SERVICE_ACCOUNT_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n');
 
 // Sincronizar eventos do Calendar para todos os usuários do domínio
-exports.syncCalendarEvents = async () => {
+exports.syncCalendarEvents = async (onFinish) => {
   try {
     let totalEventos = 0;
     let totalReunioes = 0;
     let totalUsuarios = 0;
     const usuarios = await userModel.getAllUsers();
-    console.log(`👥 Encontrados ${usuarios.length} usuários cadastrados no banco.`);
+    console.log(`👥 Encontrados ${usuarios.length} usuários cadastrados para sincronizar eventos do Calendar.`);
     for (const usuario of usuarios) {
       try {
         console.log(`\n👤 Processando usuário: ${usuario.email} (${usuario.nome || ''})`);
@@ -68,6 +68,7 @@ exports.syncCalendarEvents = async () => {
                 usuario_email: usuario.email,
                 usuario_nome: usuario.nome || usuario.email,
                 event_id: evento.id,
+                iCalUID: evento.iCalUID || null,
                 titulo: evento.summary || (isReuniao ? 'Reunião sem título' : 'Evento sem título'),
                 descricao: evento.description || null,
                 localizacao: evento.location || null,
@@ -88,6 +89,25 @@ exports.syncCalendarEvents = async () => {
                 modificado_em: evento.updated ? new Date(evento.updated) : null,
                 dados_completos: evento
               };
+              // Lógica para evitar duplicados: verifica por event_id OU iCalUID para o usuário
+              let existe = false;
+              if (dadosEvento.iCalUID) {
+                const { rows } = await calendarEventModel.pool.query(
+                  'SELECT 1 FROM google.calendar_events WHERE usuario_id = $1 AND (event_id = $2 OR dados_completos->>\'iCalUID\' = $3) LIMIT 1',
+                  [dadosEvento.usuario_id, dadosEvento.event_id, dadosEvento.iCalUID]
+                );
+                existe = rows.length > 0;
+              } else {
+                const { rows } = await calendarEventModel.pool.query(
+                  'SELECT 1 FROM google.calendar_events WHERE usuario_id = $1 AND event_id = $2 LIMIT 1',
+                  [dadosEvento.usuario_id, dadosEvento.event_id]
+                );
+                existe = rows.length > 0;
+              }
+              if (existe) {
+                // Já existe, pula
+                continue;
+              }
               await calendarEventModel.upsertEvent(dadosEvento);
               if (isReuniao) {
                 totalReunioes++;
@@ -116,9 +136,11 @@ exports.syncCalendarEvents = async () => {
       }
     }
     console.log(`\n🎉 Sincronização concluída: Usuários: ${totalUsuarios}, Eventos: ${totalEventos}, Reuniões: ${totalReunioes}`);
+    if (onFinish) onFinish({ totalEventos, totalReunioes, totalUsuarios });
     return { totalEventos, totalReunioes, totalUsuarios };
   } catch (error) {
     console.error('❌ Erro ao sincronizar eventos:', error);
+    if (onFinish) onFinish({ error });
     throw error;
   }
 };

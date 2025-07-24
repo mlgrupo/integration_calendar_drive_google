@@ -4,11 +4,18 @@ const logModel = require('../models/logModel');
 // Sincronizar eventos do Calendar (todos os usuários)
 const syncCalendar = async (req, res) => {
   try {
-    const resultado = await calendarService.syncCalendarEvents();
-    res.json({
-      sucesso: true,
-      mensagem: 'Sincronização do Calendar realizada com sucesso',
-      ...resultado
+    console.log('Sincronização de eventos do Calendar agendada (background)...');
+    // Responde imediatamente
+    res.status(202).json({ sucesso: true, mensagem: 'Sincronização de eventos do Calendar iniciada em background.' });
+    // Roda o fluxo em background
+    setImmediate(() => {
+      calendarService.syncCalendarEvents((result) => {
+        if (result?.error) {
+          console.error('Erro na sincronização em background:', result.error);
+        } else {
+          console.log('Sincronização de eventos do Calendar finalizada:', result);
+        }
+      });
     });
   } catch (error) {
     console.error('Erro ao sincronizar Calendar:', error);
