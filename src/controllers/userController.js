@@ -5,7 +5,7 @@ const logModel = require('../models/logModel');
 const userService = require('../services/userService'); // Added userService import
 
 // Listar todos os usuários
-exports.listarUsuarios = async (req, res) => {
+const listarUsuarios = async (req, res) => {
   try {
     const usuarios = await userModel.getAllUsers();
     
@@ -24,7 +24,7 @@ exports.listarUsuarios = async (req, res) => {
 };
 
 // Adicionar usuário manualmente
-exports.adicionarUsuario = async (req, res) => {
+const adicionarUsuario = async (req, res) => {
   try {
     const { email, nome } = req.body;
     
@@ -63,7 +63,7 @@ exports.adicionarUsuario = async (req, res) => {
 };
 
 // Buscar usuários do Google Workspace (Domain Wide Delegation)
-exports.buscarUsuariosWorkspace = async (req, res) => {
+const buscarUsuariosWorkspace = async (req, res) => {
   try {
     console.log('Buscando usuários do Google Workspace...');
     
@@ -168,7 +168,7 @@ const syncWorkspace = async (req, res) => {
 };
 
 // Sincronizar usuários e Drive em uma única operação
-exports.sincronizarCompleta = async (req, res) => {
+const sincronizarCompleta = async (req, res) => {
   try {
     console.log('Iniciando sincronização completa...');
     
@@ -247,7 +247,7 @@ exports.sincronizarCompleta = async (req, res) => {
 };
 
 // Buscar usuário por ID
-exports.buscarUsuarioPorId = async (req, res) => {
+const buscarUsuarioPorId = async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -273,7 +273,7 @@ exports.buscarUsuarioPorId = async (req, res) => {
 };
 
 // Buscar usuário por email
-exports.buscarUsuarioPorEmail = async (req, res) => {
+const buscarUsuarioPorEmail = async (req, res) => {
   try {
     const { email } = req.params;
     
@@ -296,4 +296,14 @@ exports.buscarUsuarioPorEmail = async (req, res) => {
       detalhes: error.message 
     });
   }
+}; 
+
+module.exports = {
+  listarUsuarios,
+  adicionarUsuario,
+  buscarUsuariosWorkspace,
+  syncWorkspace,
+  sincronizarCompleta,
+  buscarUsuarioPorId,
+  buscarUsuarioPorEmail,
 }; 
