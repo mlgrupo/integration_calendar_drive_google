@@ -71,3 +71,27 @@ exports.syncCalendarEventsJWT = async () => {
     throw error;
   }
 }; 
+
+// Registrar webhook do Google Calendar usando JWT (padrão Google)
+exports.registrarWebhookCalendarJWT = async (email, calendarId, webhookUrl) => {
+  try {
+    const { getCalendarClient } = require('../config/googleJWT');
+    const calendar = await getCalendarClient(email);
+
+    // Registrar canal de webhook
+    const response = await calendar.events.watch({
+      calendarId: calendarId,
+      requestBody: {
+        id: `calendar-watch-${email}-${Date.now()}`,
+        type: 'web_hook',
+        address: webhookUrl,
+        expiration: Date.now() + (7 * 24 * 60 * 60 * 1000) // 7 dias
+      }
+    });
+    console.log('Canal do Calendar registrado:', response.data);
+    return response.data;
+  } catch (error) {
+    console.error('Erro ao registrar webhook do Calendar:', error.message);
+    throw error;
+  }
+}; 

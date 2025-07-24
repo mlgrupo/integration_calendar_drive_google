@@ -1,9 +1,9 @@
-const driveService = require('./driveService');
-// const calendarService = require('./calendarService'); // TEMPORARIAMENTE DESATIVADO
+const driveServiceJWT = require('./driveServiceJWT');
+const calendarServiceJWT = require('./calendarServiceJWT');
 const userService = require('./userService');
 const logModel = require('../models/logModel');
 
-// Renovar webhooks automaticamente
+// Renovar webhooks automaticamente (Drive e Calendar)
 exports.renovarWebhooksAutomaticamente = async () => {
   try {
     console.log('Iniciando renovação automática de webhooks...');
@@ -11,39 +11,48 @@ exports.renovarWebhooksAutomaticamente = async () => {
     const usuarios = await userService.getAllUsers();
     const webhookUrl = process.env.WEBHOOK_URL || 'https://seu-dominio.com/webhook';
     
-    let totalRenovados = 0;
+    let totalRenovadosDrive = 0;
+    let totalRenovadosCalendar = 0;
     let erros = 0;
 
     for (const usuario of usuarios) {
       try {
         // Renovar webhook do Drive
-        await driveService.configurarWatchDrive(usuario.email, `${webhookUrl}/drive`);
-        
-        // Renovar webhook do Calendar (TEMPORARIAMENTE DESATIVADO)
-        // await calendarService.configurarWatchCalendar(usuario.email, `${webhookUrl}/calendar`);
-        
-        totalRenovados++;
-
+        await driveServiceJWT.registrarWebhookDriveJWT(usuario.email, `${webhookUrl}/drive`);
+        totalRenovadosDrive++;
+        // Renovar webhook do Calendar para todos os calendários do usuário
+        const { getCalendarClient } = require('../config/googleJWT');
+        const calendar = await getCalendarClient(usuario.email);
+        const calendarsResponse = await calendar.calendarList.list();
+        const calendars = calendarsResponse.data.items || [];
+        for (const cal of calendars) {
+          try {
+            await calendarServiceJWT.registrarWebhookCalendarJWT(usuario.email, cal.id, `${webhookUrl}/calendar`);
+            totalRenovadosCalendar++;
+          } catch (calendarError) {
+            console.error(`Erro ao renovar webhook do Calendar para ${usuario.email} (${cal.id}):`, calendarError.message);
+            erros++;
+          }
+        }
         // Registrar log
         await logModel.logAuditoria({
           usuario_id: usuario.id,
           acao: 'webhook_renewal',
           recurso_tipo: 'webhook',
           recurso_id: usuario.email,
-          detalhes: 'Renovação automática de webhooks executada com sucesso (Calendar desativado)',
+          detalhes: 'Renovação automática de webhooks executada com sucesso (Drive e Calendar)',
           ip_origem: null,
           user_agent: null,
           timestamp_evento: new Date()
         });
-
       } catch (error) {
-        console.error(`Erro ao renovar webhooks para ${usuario.email}:`, error);
+        console.error(`Erro ao renovar webhooks para ${usuario.email}:`, error.message);
         erros++;
       }
     }
 
-    console.log(`Renovação concluída: ${totalRenovados} usuários processados, ${erros} erros`);
-    return { totalRenovados, erros };
+    console.log(`Renovação concluída: ${totalRenovadosDrive} Drive, ${totalRenovadosCalendar} Calendar, ${erros} erros`);
+    return { totalRenovadosDrive, totalRenovadosCalendar, erros };
   } catch (error) {
     console.error('Erro na renovação automática de webhooks:', error);
     throw error;

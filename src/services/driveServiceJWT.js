@@ -251,9 +251,9 @@ exports.configurarWatchDriveJWT = async (email, webhookUrl) => {
 
     // Obter token de página inicial
     const about = await drive.about.get({
-      fields: 'changes.startPageToken'
+      fields: '*'
     });
-    const startPageToken = about.data.changes.startPageToken;
+    const startPageToken = about.data.startPageToken;
 
     // Configurar watch
     const watchResponse = await drive.changes.watch({
@@ -270,6 +270,35 @@ exports.configurarWatchDriveJWT = async (email, webhookUrl) => {
     return watchResponse.data;
   } catch (error) {
     console.error('Erro ao configurar watch do Drive:', error);
+    throw error;
+  }
+}; 
+
+// Registrar webhook do Drive usando JWT (padrão Google)
+exports.registrarWebhookDriveJWT = async (email, webhookUrl) => {
+  try {
+    const { getDriveClient } = require('../config/googleJWT');
+    const drive = await getDriveClient(email);
+
+    // Obter startPageToken
+    const about = await drive.about.get({ fields: 'startPageToken' });
+    const startPageToken = about.data.startPageToken;
+    if (!startPageToken) throw new Error('startPageToken não encontrado');
+
+    // Registrar canal de webhook
+    const response = await drive.changes.watch({
+      pageToken: startPageToken,
+      requestBody: {
+        id: `drive-watch-${email}-${Date.now()}`,
+        type: 'web_hook',
+        address: webhookUrl,
+        expiration: Date.now() + (7 * 24 * 60 * 60 * 1000) // 7 dias
+      }
+    });
+    console.log('Canal do Drive registrado:', response.data);
+    return response.data;
+  } catch (error) {
+    console.error('Erro ao registrar webhook do Drive:', error.message);
     throw error;
   }
 }; 
