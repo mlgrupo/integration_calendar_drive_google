@@ -332,3 +332,29 @@ exports.testarAdminSDK = async (req, res) => {
     });
   }
 }; 
+
+// Sincronizar arquivos e pastas do Drive para um usuário específico
+exports.syncDrivePorUsuario = async (req, res) => {
+  try {
+    const email = req.params.email;
+    if (!email) {
+      return res.status(400).json({ erro: 'Email é obrigatório.' });
+    }
+    const resultado = await driveService.syncDriveFilesPorUsuario(email);
+    res.json({ sucesso: true, mensagem: `Sincronização do Drive para ${email} executada com sucesso!`, resultado });
+  } catch (error) {
+    res.status(500).json({ erro: 'Falha ao sincronizar arquivos/pastas do Drive para o usuário', detalhes: error.message });
+  }
+};
+
+// Webhook do Drive
+exports.webhookDrive = async (req, res) => {
+  try {
+    // Aqui você pode processar a notificação do Google Drive
+    // Exemplo: logar o body recebido
+    console.log('Webhook do Drive recebido:', req.body);
+    res.status(200).json({ recebido: true });
+  } catch (error) {
+    res.status(500).json({ erro: 'Falha ao processar webhook do Drive', detalhes: error.message });
+  }
+}; 
