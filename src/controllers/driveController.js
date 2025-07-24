@@ -4,7 +4,7 @@ const logModel = require('../models/logModel');
 const webhookDebug = require('../utils/webhookDebug');
 
 // Sincronizar arquivos e pastas do Drive
-exports.syncDrive = async (req, res) => {
+const syncDrive = async (req, res) => {
   try {
     console.log('Iniciando sincronização do Drive...');
     
@@ -37,7 +37,7 @@ exports.syncDrive = async (req, res) => {
 };
 
 // Configurar webhook do Drive para todos os usuários do banco
-exports.configurarWebhookDrive = async (req, res) => {
+const configurarWebhookDrive = async (req, res) => {
   try {
     const userModel = require('../models/userModel');
     const driveService = require('../services/driveService');
@@ -63,7 +63,7 @@ exports.configurarWebhookDrive = async (req, res) => {
 };
 
 // Testar webhook do Drive
-exports.testarWebhookDrive = async (req, res) => {
+const testarWebhookDrive = async (req, res) => {
   try {
     const { email } = req.body;
     
@@ -104,7 +104,7 @@ exports.testarWebhookDrive = async (req, res) => {
 };
 
 // Debug do Drive
-exports.debugDrive = async (req, res) => {
+const debugDrive = async (req, res) => {
   try {
     const { email } = req.query;
     const userEmail = email || process.env.ADMIN_EMAIL || 'admin@reconectaoficial.com.br';
@@ -136,7 +136,7 @@ exports.debugDrive = async (req, res) => {
 }; 
 
 // Testar autenticação do Drive
-exports.testarAutenticacao = async (req, res) => {
+const testarAutenticacao = async (req, res) => {
   try {
     const { email } = req.query;
     const userEmail = email || process.env.ADMIN_EMAIL || 'admin@reconectaoficial.com.br';
@@ -204,7 +204,7 @@ exports.testarAutenticacao = async (req, res) => {
 }; 
 
 // Testar DriveFileManager para um usuário específico
-exports.testDriveFileManager = async (req, res) => {
+const testDriveFileManager = async (req, res) => {
   try {
     const { email } = req.params;
     
@@ -266,7 +266,7 @@ exports.testDriveFileManager = async (req, res) => {
 };
 
 // Testar diferentes queries para debug
-exports.testarQueries = async (req, res) => {
+const testarQueries = async (req, res) => {
   try {
     const { email } = req.params;
     
@@ -300,7 +300,7 @@ exports.testarQueries = async (req, res) => {
 };
 
 // Testar Admin SDK (Domain Wide Delegation)
-exports.testarAdminSDK = async (req, res) => {
+const testarAdminSDK = async (req, res) => {
   try {
     const { email } = req.params;
     
@@ -334,7 +334,7 @@ exports.testarAdminSDK = async (req, res) => {
 }; 
 
 // Sincronizar arquivos e pastas do Drive para um usuário específico
-exports.syncDrivePorUsuario = async (req, res) => {
+const syncDrivePorUsuario = async (req, res) => {
   try {
     const email = req.params.email;
     if (!email) {
@@ -348,7 +348,7 @@ exports.syncDrivePorUsuario = async (req, res) => {
 };
 
 // Webhook do Drive
-exports.webhookDrive = async (req, res) => {
+const webhookDrive = async (req, res) => {
   try {
     // Aqui você pode processar a notificação do Google Drive
     // Exemplo: logar o body recebido
