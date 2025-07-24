@@ -6,12 +6,15 @@ const logModel = require('../models/logModel');
 // Sincronizar usuários do domínio via Admin SDK
 exports.syncUsers = async () => {
   try {
-    const adminAuth = getGoogleClient(['https://www.googleapis.com/auth/admin.directory.user.readonly'], process.env.ADMIN_EMAIL);
+    // Escopo correto e sub do superadmin
+    const adminAuth = await getGoogleClient([
+      'https://www.googleapis.com/auth/admin.directory.user.readonly'
+    ], process.env.ADMIN_EMAIL); // superadmin
     const admin = google.admin({ version: 'directory_v1', auth: adminAuth });
 
-    // Buscar todos os usuários do domínio
+    // Buscar todos os usuários do domínio (padrão Google)
     const response = await admin.users.list({
-      customer: 'my_customer',
+      customer: 'my_customer', // NÃO use domain aqui!
       maxResults: 500,
       orderBy: 'email'
     });
@@ -23,7 +26,6 @@ exports.syncUsers = async () => {
       if (user.primaryEmail && user.primaryEmail.endsWith('@reconectaoficial.com.br')) {
         // Verificar se o usuário já existe
         const existingUser = await userModel.getUserByEmail(user.primaryEmail);
-        
         if (!existingUser) {
           // Criar novo usuário
           await userModel.getOrCreateUsuario(
@@ -32,9 +34,7 @@ exports.syncUsers = async () => {
           );
           novosUsuarios++;
         }
-        
         totalUsuarios++;
-
         // Registrar log de auditoria
         await logModel.logAuditoria({
           usuario_id: existingUser ? existingUser.id : null,
@@ -48,7 +48,6 @@ exports.syncUsers = async () => {
         });
       }
     }
-
     return { totalUsuarios, novosUsuarios };
   } catch (error) {
     console.error('Erro ao sincronizar usuários:', error);
