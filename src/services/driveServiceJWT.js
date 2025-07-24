@@ -251,9 +251,9 @@ exports.configurarWatchDriveJWT = async (email, webhookUrl) => {
 
     // Obter token de página inicial
     const about = await drive.about.get({
-      fields: 'startPageToken'
+      fields: 'changes.startPageToken'
     });
-    const startPageToken = about.data.startPageToken;
+    const startPageToken = about.data.changes.startPageToken;
 
     // Configurar watch
     const watchResponse = await drive.changes.watch({
