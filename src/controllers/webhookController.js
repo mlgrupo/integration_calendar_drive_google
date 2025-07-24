@@ -12,17 +12,20 @@ exports.driveWebhook = async (req, res) => {
     console.log('IP:', req.ip);
     console.log('User-Agent:', req.get('User-Agent'));
     
+    // Acesso defensivo ao body
+    const body = req.body || {};
+    
     // Verificar se é um desafio de verificação
-    if (req.body.type === 'web_hook_challenge') {
+    if (body.type === 'web_hook_challenge') {
       console.log('✅ Desafio de verificação recebido');
-      return res.status(200).json({ challenge: req.body.challenge });
+      return res.status(200).json({ challenge: body.challenge });
     }
 
     // Processar mudanças do Drive
-    if (req.body.changes && Array.isArray(req.body.changes)) {
-      console.log(`🔄 Processando ${req.body.changes.length} mudanças`);
+    if (body.changes && Array.isArray(body.changes)) {
+      console.log(`🔄 Processando ${body.changes.length} mudanças`);
       
-      for (const change of req.body.changes) {
+      for (const change of body.changes) {
         console.log('📝 Processando mudança:', change);
         
         try {
@@ -108,7 +111,7 @@ exports.driveWebhook = async (req, res) => {
       }
     } else {
       console.log('⚠️ Nenhuma mudança encontrada no webhook ou formato inválido');
-      console.log('Body completo:', req.body);
+      console.log('Body completo:', body);
     }
 
     console.log('=== WEBHOOK PROCESSADO COM SUCESSO ===');
@@ -116,7 +119,7 @@ exports.driveWebhook = async (req, res) => {
       sucesso: true, 
       processado: true,
       timestamp: new Date().toISOString(),
-      mudancas: req.body.changes?.length || 0
+      mudancas: body.changes?.length || 0
     });
   } catch (error) {
     console.error('❌ Erro geral ao processar webhook do Drive:', error);
@@ -131,11 +134,12 @@ exports.driveWebhook = async (req, res) => {
 // Webhook do Calendar (TEMPORARIAMENTE DESATIVADO)
 exports.calendarWebhook = async (req, res) => {
   try {
-    console.log('Webhook do Calendar recebido (DESATIVADO):', req.body);
+    const body = req.body || {};
+    console.log('Webhook do Calendar recebido (DESATIVADO):', body);
     
     // Verificar se é um desafio de verificação
-    if (req.body.type === 'web_hook_challenge') {
-      return res.status(200).json({ challenge: req.body.challenge });
+    if (body.type === 'web_hook_challenge') {
+      return res.status(200).json({ challenge: body.challenge });
     }
 
     // Calendar temporariamente desativado
