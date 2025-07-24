@@ -2,6 +2,7 @@ const driveServiceJWT = require('./driveServiceJWT');
 const calendarServiceJWT = require('./calendarServiceJWT');
 const userService = require('./userService');
 const logModel = require('../models/logModel');
+const cron = require('node-cron');
 
 // Renovar webhooks automaticamente (Drive e Calendar)
 exports.renovarWebhooksAutomaticamente = async () => {
@@ -9,7 +10,7 @@ exports.renovarWebhooksAutomaticamente = async () => {
     console.log('Iniciando renovação automática de webhooks...');
     
     const usuarios = await userService.getAllUsers();
-    const webhookUrl = process.env.WEBHOOK_URL || 'https://seu-dominio.com/webhook';
+    const webhookUrl = process.env.WEBHOOK_URL;
     
     let totalRenovadosDrive = 0;
     let totalRenovadosCalendar = 0;
@@ -93,3 +94,26 @@ exports.verificarStatusWebhooks = async () => {
     throw error;
   }
 }; 
+
+// Agendamento automático de renovação de webhooks a cada 6 horas
+function startWebhookRenewalScheduler() {
+  cron.schedule('0 */6 * * *', async () => {
+    console.log('⏰ Iniciando renovação automática de webhooks (agendado)...');
+    try {
+      await exports.renovarWebhooksAutomaticamente();
+    } catch (error) {
+      console.error('Erro na renovação automática agendada:', error.message);
+    }
+  });
+  // Rodar imediatamente ao iniciar
+  (async () => {
+    try {
+      await exports.renovarWebhooksAutomaticamente();
+    } catch (error) {
+      console.error('Erro na renovação automática inicial:', error.message);
+    }
+  })();
+}
+
+// Iniciar agendamento ao carregar o serviço
+startWebhookRenewalScheduler(); 

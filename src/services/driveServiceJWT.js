@@ -280,9 +280,9 @@ exports.registrarWebhookDriveJWT = async (email, webhookUrl) => {
     const { getDriveClient } = require('../config/googleJWT');
     const drive = await getDriveClient(email);
 
-    // Obter startPageToken
-    const about = await drive.about.get({ fields: 'startPageToken' });
-    const startPageToken = about.data.startPageToken;
+    // Obter startPageToken corretamente
+    const startPageTokenResponse = await drive.changes.getStartPageToken();
+    const startPageToken = startPageTokenResponse.data.startPageToken;
     if (!startPageToken) throw new Error('startPageToken não encontrado');
 
     // Registrar canal de webhook
