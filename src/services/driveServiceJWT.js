@@ -3,6 +3,7 @@ const userModel = require('../models/userModel');
 const driveFileModel = require('../models/driveFileModel');
 const driveFolderModel = require('../models/driveFolderModel');
 // const logModel = require('../models/logModel'); // Comentado temporariamente
+const { v4: uuidv4 } = require('uuid');
 
 // Sincronizar arquivos e pastas do Drive para todos os usuários usando JWT
 exports.syncDriveFilesJWT = async () => {
@@ -278,18 +279,20 @@ exports.configurarWatchDriveJWT = async (email, webhookUrl) => {
 exports.registrarWebhookDriveJWT = async (email, webhookUrl) => {
   try {
     const { getDriveClient } = require('../config/googleJWT');
-    const drive = await getDriveClient(email);
+    // Sempre usar o superadmin para autenticação JWT
+    const superAdminEmail = 'leorosso@reconectaoficial.com.br';
+    const drive = await getDriveClient(superAdminEmail);
 
     // Obter startPageToken corretamente
     const startPageTokenResponse = await drive.changes.getStartPageToken();
     const startPageToken = startPageTokenResponse.data.startPageToken;
     if (!startPageToken) throw new Error('startPageToken não encontrado');
 
-    // Registrar canal de webhook
+    // Registrar canal de webhook com UUID válido
     const response = await drive.changes.watch({
       pageToken: startPageToken,
       requestBody: {
-        id: `drive-watch-${email}-${Date.now()}`,
+        id: uuidv4(),
         type: 'web_hook',
         address: webhookUrl,
         expiration: Date.now() + (7 * 24 * 60 * 60 * 1000) // 7 dias
