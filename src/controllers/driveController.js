@@ -358,3 +358,10 @@ exports.webhookDrive = async (req, res) => {
     res.status(500).json({ erro: 'Falha ao processar webhook do Drive', detalhes: error.message });
   }
 }; 
+
+module.exports = {
+  syncDrive,
+  syncDrivePorUsuario,
+  webhookDrive,
+  configurarWebhookDrive
+}; 
