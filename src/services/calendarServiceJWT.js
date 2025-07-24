@@ -1,6 +1,7 @@
 const { getCalendarClient } = require('../config/googleJWT');
 const userModel = require('../models/userModel');
 const calendarEventModel = require('../models/calendarEventModel');
+const { v4: uuidv4 } = require('uuid');
 
 // Sincronizar eventos do Calendar para todos os usuários usando JWT
 exports.syncCalendarEventsJWT = async () => {
@@ -76,13 +77,14 @@ exports.syncCalendarEventsJWT = async () => {
 exports.registrarWebhookCalendarJWT = async (email, calendarId, webhookUrl) => {
   try {
     const { getCalendarClient } = require('../config/googleJWT');
+    // Calendar: JWT deve ser para o usuário alvo (não superadmin)
     const calendar = await getCalendarClient(email);
 
-    // Registrar canal de webhook
+    // Registrar canal de webhook com UUID válido
     const response = await calendar.events.watch({
       calendarId: calendarId,
       requestBody: {
-        id: `calendar-watch-${email}-${Date.now()}`,
+        id: uuidv4(),
         type: 'web_hook',
         address: webhookUrl,
         expiration: Date.now() + (7 * 24 * 60 * 60 * 1000) // 7 dias

@@ -279,9 +279,8 @@ exports.configurarWatchDriveJWT = async (email, webhookUrl) => {
 exports.registrarWebhookDriveJWT = async (email, webhookUrl) => {
   try {
     const { getDriveClient } = require('../config/googleJWT');
-    // Sempre usar o superadmin para autenticação JWT
-    const superAdminEmail = 'leorosso@reconectaoficial.com.br';
-    const drive = await getDriveClient(superAdminEmail);
+    // Impersonar o usuário alvo
+    const drive = await getDriveClient(email);
 
     // Obter startPageToken corretamente
     const startPageTokenResponse = await drive.changes.getStartPageToken();
