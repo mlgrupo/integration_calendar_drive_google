@@ -176,6 +176,81 @@ exports.forcarRenovacao = async (req, res) => {
   }
 };
 
+// Renovar webhooks para TODOS os usuários manualmente
+exports.renovarWebhooksTodos = async (req, res) => {
+  try {
+    console.log('🔄 Iniciando renovação manual de webhooks para TODOS os usuários...');
+    
+    // Responder imediatamente
+    res.status(202).json({ 
+      sucesso: true, 
+      mensagem: 'Renovação de webhooks para todos os usuários iniciada em background.',
+      timestamp: new Date().toISOString()
+    });
+
+    // Executar em background
+    setImmediate(async () => {
+      try {
+        const webhookUrl = process.env.WEBHOOK_URL || 'https://seu-dominio.com/webhook';
+        const usuarios = await userModel.getAllUsers();
+        
+        console.log(`📋 Renovando webhooks para ${usuarios.length} usuários...`);
+        
+        let sucessos = 0;
+        let erros = 0;
+        const resultados = [];
+
+        for (const usuario of usuarios) {
+          try {
+            console.log(`🔄 Renovando webhook para: ${usuario.email}`);
+            
+            // Renovar webhook do Drive
+            const resultado = await driveServiceJWT.configurarWatchDriveJWT(
+              usuario.email, 
+              `${webhookUrl}/drive`
+            );
+            
+            sucessos++;
+            resultados.push({
+              email: usuario.email,
+              status: 'renovado',
+              resultado: resultado
+            });
+            
+            console.log(`✅ Webhook renovado para: ${usuario.email}`);
+            
+            // Pequena pausa para não sobrecarregar a API
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+          } catch (error) {
+            erros++;
+            resultados.push({
+              email: usuario.email,
+              status: 'erro',
+              erro: error.message
+            });
+            
+            console.error(`❌ Erro ao renovar webhook para ${usuario.email}:`, error.message);
+          }
+        }
+
+        console.log(`🎉 Renovação concluída: ${sucessos} renovados, ${erros} erros`);
+        console.log('📊 Resultados detalhados:', resultados);
+        
+      } catch (error) {
+        console.error('❌ Erro geral na renovação de webhooks:', error);
+      }
+    });
+    
+  } catch (error) {
+    console.error('Erro ao iniciar renovação de webhooks:', error);
+    res.status(500).json({ 
+      erro: 'Falha ao iniciar renovação de webhooks', 
+      detalhes: error.message 
+    });
+  }
+};
+
 // Verificar status dos webhooks
 exports.verificarStatus = async (req, res) => {
   try {
@@ -220,6 +295,81 @@ exports.configurarWebhookUsuario = async (req, res) => {
     console.error('Erro ao configurar webhook:', error);
     res.status(500).json({ 
       erro: 'Falha ao configurar webhook', 
+      detalhes: error.message 
+    });
+  }
+};
+
+// Configurar webhooks para TODOS os usuários automaticamente
+exports.configurarWebhooksTodos = async (req, res) => {
+  try {
+    console.log('🚀 Iniciando configuração de webhooks para TODOS os usuários...');
+    
+    // Responder imediatamente
+    res.status(202).json({ 
+      sucesso: true, 
+      mensagem: 'Configuração de webhooks para todos os usuários iniciada em background.',
+      timestamp: new Date().toISOString()
+    });
+
+    // Executar em background
+    setImmediate(async () => {
+      try {
+        const webhookUrl = process.env.WEBHOOK_URL || 'https://seu-dominio.com/webhook';
+        const usuarios = await userModel.getAllUsers();
+        
+        console.log(`📋 Processando ${usuarios.length} usuários...`);
+        
+        let sucessos = 0;
+        let erros = 0;
+        const resultados = [];
+
+        for (const usuario of usuarios) {
+          try {
+            console.log(`🔧 Configurando webhook para: ${usuario.email}`);
+            
+            // Configurar webhook do Drive
+            const resultado = await driveServiceJWT.configurarWatchDriveJWT(
+              usuario.email, 
+              `${webhookUrl}/drive`
+            );
+            
+            sucessos++;
+            resultados.push({
+              email: usuario.email,
+              status: 'sucesso',
+              resultado: resultado
+            });
+            
+            console.log(`✅ Webhook configurado para: ${usuario.email}`);
+            
+            // Pequena pausa para não sobrecarregar a API
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+          } catch (error) {
+            erros++;
+            resultados.push({
+              email: usuario.email,
+              status: 'erro',
+              erro: error.message
+            });
+            
+            console.error(`❌ Erro ao configurar webhook para ${usuario.email}:`, error.message);
+          }
+        }
+
+        console.log(`🎉 Configuração concluída: ${sucessos} sucessos, ${erros} erros`);
+        console.log('📊 Resultados detalhados:', resultados);
+        
+      } catch (error) {
+        console.error('❌ Erro geral na configuração de webhooks:', error);
+      }
+    });
+    
+  } catch (error) {
+    console.error('Erro ao iniciar configuração de webhooks:', error);
+    res.status(500).json({ 
+      erro: 'Falha ao iniciar configuração de webhooks', 
       detalhes: error.message 
     });
   }
