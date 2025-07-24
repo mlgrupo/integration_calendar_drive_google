@@ -6,6 +6,10 @@ const logger = require('./src/middlewares/logger');
 const errorHandler = require('./src/middlewares/errorHandler');
 const { initScheduledJobs } = require('./src/jobs/renewWebhooks');
 
+// Middlewares para interpretar o body das requisições
+app.use(express.json({ type: 'application/json' }));
+app.use(express.urlencoded({ extended: true }));
+
 // Middlewares
 app.use(express.json());
 app.use(logger);
