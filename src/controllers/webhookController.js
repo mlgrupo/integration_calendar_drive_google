@@ -116,25 +116,33 @@ exports.calendarWebhook = async (req, res) => {
     const timeMin = new Date(now.getTime() - (24 * 60 * 60 * 1000)); // Últimas 24 horas
     const timeMax = new Date(now.getTime() + (7 * 24 * 60 * 60 * 1000)); // Próximos 7 dias
 
-    const events = await calendar.events.list({
-      calendarId: calendarId,
-      timeMin: timeMin.toISOString(),
-      timeMax: timeMax.toISOString(),
-      singleEvents: true,
-      orderBy: 'startTime'
-    });
+    try {
+      const events = await calendar.events.list({
+        calendarId: calendarId,
+        timeMin: timeMin.toISOString(),
+        timeMax: timeMax.toISOString(),
+        singleEvents: true,
+        orderBy: 'startTime'
+      });
 
-    if (events.data.items && events.data.items.length > 0) {
-      console.log(`🔄 Processando ${events.data.items.length} eventos do Calendar`);
-      for (const event of events.data.items) {
-        try {
-          await calendarServiceJWT.processarEventoCalendarJWT(event, userEmail, calendarId);
-        } catch (error) {
-          console.error('Erro ao processar evento do Calendar:', error.message);
+      if (events.data.items && events.data.items.length > 0) {
+        console.log(`🔄 Processando ${events.data.items.length} eventos do Calendar`);
+        for (const event of events.data.items) {
+          try {
+            await calendarServiceJWT.processarEventoCalendarJWT(event, userEmail, calendarId);
+          } catch (error) {
+            console.error('Erro ao processar evento do Calendar:', error.message);
+          }
         }
+      } else {
+        console.log('⚠️ Nenhum evento encontrado no Calendar para este período');
       }
-    } else {
-      console.log('⚠️ Nenhum evento encontrado no Calendar para este período');
+    } catch (apiError) {
+      console.error('❌ Erro ao buscar eventos da API do Calendar:', apiError.message);
+      // Se der erro 403 (Forbidden), pode ser problema de permissão
+      if (apiError.response && apiError.response.status === 403) {
+        console.warn('⚠️ Erro 403 - Verificar permissões do usuário:', userEmail);
+      }
     }
 
     res.status(200).json({ sucesso: true, processado: true, timestamp: new Date().toISOString() });

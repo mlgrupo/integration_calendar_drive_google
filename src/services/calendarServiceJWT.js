@@ -122,6 +122,7 @@ exports.processarEventoCalendarJWT = async (evento, userEmail, calendarId) => {
     await calendarEventModel.upsertEvent({
       usuario_id: usuario.id,
       event_id: evento.id,
+      icaluid: evento.iCalUID || null,
       titulo: evento.summary || (isReuniao ? 'Reunião sem título' : 'Evento sem título'),
       descricao: evento.description || null,
       localizacao: evento.location || null,
