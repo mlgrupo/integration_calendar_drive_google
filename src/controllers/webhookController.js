@@ -405,14 +405,36 @@ exports.calendarWebhook = async (req, res) => {
             
             if (isSignificantEvent) {
               console.log(`    ✅ Evento significativo detectado: ${event.summary || event.id}`);
-              await calendarServiceJWT.processarEventoCalendarJWT(event, userEmail, calendarId);
-              eventosProcessados++;
+              try {
+                await calendarServiceJWT.processarEventoCalendarJWT(event, userEmail, calendarId);
+                eventosProcessados++;
+              } catch (error) {
+                console.error(`❌ Erro ao processar evento ${event.id}:`, error.message);
+                
+                // Se for erro de constraint, tentar resolver
+                if (error.code === '42P10' || error.message.includes('ON CONFLICT')) {
+                  console.log(`🔧 Tentando resolver erro de constraint para evento ${event.id}...`);
+                  try {
+                    // Tentar processar novamente com dados limpos
+                    const eventLimpo = {
+                      ...event,
+                      id: event.id ? event.id.toString().split('_')[0] : event.id,
+                      iCalUID: event.iCalUID ? event.iCalUID.toString().split('_')[0] : event.iCalUID
+                    };
+                    await calendarServiceJWT.processarEventoCalendarJWT(eventLimpo, userEmail, calendarId);
+                    console.log(`✅ Evento ${event.id} processado com sucesso após limpeza`);
+                    eventosProcessados++;
+                  } catch (retryError) {
+                    console.error(`❌ Falha na segunda tentativa para evento ${event.id}:`, retryError.message);
+                  }
+                }
+              }
             } else {
               console.log(`    🔍 Evento trivial, ignorando`);
               eventosTriviais++;
             }
           } catch (error) {
-            console.error('Erro ao processar evento do Calendar:', error.message);
+            console.error('❌ Erro geral ao processar evento do Calendar:', error.message);
           }
         }
         
@@ -461,7 +483,25 @@ exports.calendarWebhook = async (req, res) => {
                     await calendarServiceJWT.processarEventoCalendarJWT(evento, userEmail, cal.id);
                     totalEventos++;
                   } catch (error) {
-                    console.error(`Erro ao processar evento ${evento.id}:`, error.message);
+                    console.error(`❌ Erro ao processar evento ${evento.id}:`, error.message);
+                    
+                    // Se for erro de constraint, tentar resolver
+                    if (error.code === '42P10' || error.message.includes('ON CONFLICT')) {
+                      console.log(`🔧 Tentando resolver erro de constraint para evento ${evento.id}...`);
+                      try {
+                        // Tentar processar novamente com dados limpos
+                        const eventoLimpo = {
+                          ...evento,
+                          id: evento.id ? evento.id.toString().split('_')[0] : evento.id,
+                          iCalUID: evento.iCalUID ? evento.iCalUID.toString().split('_')[0] : evento.iCalUID
+                        };
+                        await calendarServiceJWT.processarEventoCalendarJWT(eventoLimpo, userEmail, cal.id);
+                        console.log(`✅ Evento ${evento.id} processado com sucesso após limpeza`);
+                        totalEventos++;
+                      } catch (retryError) {
+                        console.error(`❌ Falha na segunda tentativa para evento ${evento.id}:`, retryError.message);
+                      }
+                    }
                   }
                 }
               }

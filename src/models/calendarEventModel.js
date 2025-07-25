@@ -14,7 +14,7 @@ exports.getEventById = async (eventId, usuarioId) => {
   }
 };
 
-// Inserir ou atualizar evento (upsert por icaluid OU event_id+usuario_id)
+// Inserir ou atualizar evento (upsert por event_id+usuario_id)
 exports.upsertEvent = async (eventData) => {
   try {
     const {
@@ -24,127 +24,10 @@ exports.upsertEvent = async (eventData) => {
       organizador_nome, criado_em, modificado_em, dados_completos
     } = eventData;
 
-    // ESTRATÉGIA: Sempre usar iCalUID como chave principal (é único globalmente)
-    let result;
-    
     console.log(`[CalendarModel] Processando evento: event_id=${event_id}, icaluid=${icaluid}`);
     
-    // Se tem iCalUID, usar ele como chave única (recomendado pelo Google)
-    if (icaluid && icaluid.trim() !== '') {
-      console.log(`[CalendarModel] 🎯 Usando iCalUID como chave única: ${icaluid}`);
-      try {
-        result = await pool.query(
-          `INSERT INTO google.calendar_events
-            (usuario_id, event_id, icaluid, titulo, descricao, localizacao, data_inicio, data_fim,
-             duracao_minutos, recorrente, recorrencia, calendario_id, calendario_nome,
-             status, visibilidade, transparencia, convidados, organizador_email,
-             organizador_nome, criado_em, modificado_em, dados_completos)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
-           ON CONFLICT (icaluid, usuario_id) DO UPDATE SET
-             usuario_id = EXCLUDED.usuario_id,
-             event_id = EXCLUDED.event_id,
-             titulo = EXCLUDED.titulo,
-             descricao = EXCLUDED.descricao,
-             localizacao = EXCLUDED.localizacao,
-             data_inicio = EXCLUDED.data_inicio,
-             data_fim = EXCLUDED.data_fim,
-             duracao_minutos = EXCLUDED.duracao_minutos,
-             recorrente = EXCLUDED.recorrente,
-             recorrencia = EXCLUDED.recorrencia,
-             calendario_id = EXCLUDED.calendario_id,
-             calendario_nome = EXCLUDED.calendario_nome,
-             status = EXCLUDED.status,
-             visibilidade = EXCLUDED.visibilidade,
-             transparencia = EXCLUDED.transparencia,
-             convidados = EXCLUDED.convidados,
-             organizador_email = EXCLUDED.organizador_email,
-             organizador_nome = EXCLUDED.organizador_nome,
-             criado_em = EXCLUDED.criado_em,
-             modificado_em = EXCLUDED.modificado_em,
-             dados_completos = EXCLUDED.dados_completos,
-             updated_at = NOW()
-           RETURNING *`,
-          [
-            usuario_id, event_id, icaluid, titulo, descricao, localizacao, data_inicio, data_fim,
-            duracao_minutos, recorrente, recorrencia, calendario_id, calendario_nome,
-            status, visibilidade, transparencia, convidados, organizador_email,
-            organizador_nome, criado_em, modificado_em, dados_completos
-          ]
-        );
-        console.log(`[CalendarModel] ✅ Evento upsert por iCalUID (${icaluid}):`, result.rows[0].event_id, result.rows[0].titulo);
-        return result.rows[0];
-      } catch (error) {
-        console.warn(`[CalendarModel] ⚠️ Erro no upsert por iCalUID:`, error.message);
-        
-        // Se for erro de constraint, tentar remover duplicatas primeiro
-        if (error.code === '23505' && error.constraint) {
-          console.log(`[CalendarModel] 🔧 Tentando resolver conflito de constraint: ${error.constraint}`);
-          try {
-            // Tentar remover registros duplicados
-            await pool.query(`
-              DELETE FROM google.calendar_events 
-              WHERE icaluid = $1 AND usuario_id = $2 
-              AND id NOT IN (
-                SELECT MIN(id) 
-                FROM google.calendar_events 
-                WHERE icaluid = $1 AND usuario_id = $2
-              )
-            `, [icaluid, usuario_id]);
-            console.log(`[CalendarModel] 🧹 Duplicatas removidas para icaluid: ${icaluid}`);
-            
-            // Tentar novamente
-            result = await pool.query(
-              `INSERT INTO google.calendar_events
-                (usuario_id, event_id, icaluid, titulo, descricao, localizacao, data_inicio, data_fim,
-                 duracao_minutos, recorrente, recorrencia, calendario_id, calendario_nome,
-                 status, visibilidade, transparencia, convidados, organizador_email,
-                 organizador_nome, criado_em, modificado_em, dados_completos)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
-               ON CONFLICT (icaluid, usuario_id) DO UPDATE SET
-                 usuario_id = EXCLUDED.usuario_id,
-                 event_id = EXCLUDED.event_id,
-                 titulo = EXCLUDED.titulo,
-                 descricao = EXCLUDED.descricao,
-                 localizacao = EXCLUDED.localizacao,
-                 data_inicio = EXCLUDED.data_inicio,
-                 data_fim = EXCLUDED.data_fim,
-                 duracao_minutos = EXCLUDED.duracao_minutos,
-                 recorrente = EXCLUDED.recorrente,
-                 recorrencia = EXCLUDED.recorrencia,
-                 calendario_id = EXCLUDED.calendario_id,
-                 calendario_nome = EXCLUDED.calendario_nome,
-                 status = EXCLUDED.status,
-                 visibilidade = EXCLUDED.visibilidade,
-                 transparencia = EXCLUDED.transparencia,
-                 convidados = EXCLUDED.convidados,
-                 organizador_email = EXCLUDED.organizador_email,
-                 organizador_nome = EXCLUDED.organizador_nome,
-                 criado_em = EXCLUDED.criado_em,
-                 modificado_em = EXCLUDED.modificado_em,
-                 dados_completos = EXCLUDED.dados_completos,
-                 updated_at = NOW()
-               RETURNING *`,
-              [
-                usuario_id, event_id, icaluid, titulo, descricao, localizacao, data_inicio, data_fim,
-                duracao_minutos, recorrente, recorrencia, calendario_id, calendario_nome,
-                status, visibilidade, transparencia, convidados, organizador_email,
-                organizador_nome, criado_em, modificado_em, dados_completos
-              ]
-            );
-            console.log(`[CalendarModel] ✅ Evento upsert por iCalUID após limpeza (${icaluid}):`, result.rows[0].event_id, result.rows[0].titulo);
-            return result.rows[0];
-          } catch (cleanupError) {
-            console.warn(`[CalendarModel] ⚠️ Erro na limpeza de duplicatas:`, cleanupError.message);
-            // Continuar para o fallback
-          }
-        }
-        // Se der erro no iCalUID, tentar por event_id
-      }
-    }
-    
-    // Fallback: usar event_id + usuario_id (para eventos sem iCalUID)
-    console.log(`[CalendarModel] 🔄 Fallback: usando event_id+usuario_id: ${event_id} + ${usuario_id}`);
-    result = await pool.query(
+    // ESTRATÉGIA SIMPLIFICADA: Sempre usar event_id + usuario_id como chave única
+    const result = await pool.query(
       `INSERT INTO google.calendar_events
         (usuario_id, event_id, icaluid, titulo, descricao, localizacao, data_inicio, data_fim,
          duracao_minutos, recorrente, recorrencia, calendario_id, calendario_nome,
@@ -181,10 +64,11 @@ exports.upsertEvent = async (eventData) => {
         organizador_nome, criado_em, modificado_em, dados_completos
       ]
     );
-    console.log(`[CalendarModel] ✅ Evento upsert por event_id+usuario_id (${event_id}):`, result.rows[0].event_id, result.rows[0].titulo);
+
+    console.log(`[CalendarModel] ✅ Evento upsert: ${result.rows[0].event_id} - ${result.rows[0].titulo}`);
     return result.rows[0];
   } catch (error) {
-    console.error('Erro ao inserir/atualizar evento:', error);
+    console.error('[CalendarModel] ❌ Erro no upsertEvent:', error);
     throw error;
   }
 };
