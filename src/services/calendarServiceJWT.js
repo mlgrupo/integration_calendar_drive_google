@@ -3,9 +3,22 @@ const userModel = require('../models/userModel');
 const calendarEventModel = require('../models/calendarEventModel');
 const { v4: uuidv4 } = require('uuid');
 
-// Sempre garantir que event_id e icaluid não tenham timestamp
+// Limpar IDs do Calendar (remover timestamps mas preservar IDs que começam com _)
 function cleanId(id) {
-  return typeof id === 'string' ? id.split('_')[0] : id;
+  if (typeof id !== 'string') return id;
+  
+  // Se o ID já começa com _, não é um timestamp, então retorna como está
+  if (id.startsWith('_')) {
+    return id;
+  }
+  
+  // Se contém _ e não começa com _, provavelmente tem timestamp
+  if (id.includes('_') && !id.startsWith('_')) {
+    return id.split('_')[0];
+  }
+  
+  // Caso contrário, retorna o ID original
+  return id;
 }
 
 // Sincronizar eventos do Calendar para todos os usuários usando JWT

@@ -234,11 +234,252 @@ const forcarSincronizacaoCalendar = async (req, res) => {
   }
 };
 
+// Limpar duplicatas do Calendar
+const limparDuplicatasCalendar = async (req, res) => {
+  try {
+    console.log('🧹 Iniciando limpeza de duplicatas do Calendar...');
+    
+    // Responder imediatamente
+    res.status(202).json({
+      sucesso: true,
+      mensagem: 'Limpeza de duplicatas iniciada em background',
+      timestamp: new Date().toISOString()
+    });
+
+    // Executar em background
+    setImmediate(async () => {
+      try {
+        const pool = require('../config/database');
+        
+        // 1. Verificar se a coluna icaluid existe
+        const { rows: columns } = await pool.query(`
+          SELECT column_name 
+          FROM information_schema.columns 
+          WHERE table_schema = 'google' 
+          AND table_name = 'calendar_events' 
+          AND column_name = 'icaluid'
+        `);
+        
+        if (columns.length === 0) {
+          console.log('📝 Adicionando coluna icaluid...');
+          await pool.query('ALTER TABLE google.calendar_events ADD COLUMN icaluid VARCHAR(255)');
+        }
+        
+        // 2. Contar duplicatas antes
+        const { rows: duplicatasAntes } = await pool.query(`
+          SELECT COUNT(*) as total
+          FROM (
+            SELECT event_id, usuario_id, COUNT(*) as cnt
+            FROM google.calendar_events
+            GROUP BY event_id, usuario_id
+            HAVING COUNT(*) > 1
+          ) duplicatas
+        `);
+        
+        console.log(`📊 Duplicatas encontradas: ${duplicatasAntes[0].total}`);
+        
+        // 3. Remover duplicatas (manter apenas a mais recente)
+        const { rowCount: removidas } = await pool.query(`
+          DELETE FROM google.calendar_events 
+          WHERE id NOT IN (
+            SELECT MAX(id) 
+            FROM google.calendar_events 
+            GROUP BY event_id, usuario_id
+          )
+        `);
+        
+        console.log(`🗑️ Registros removidos: ${removidas}`);
+        
+        // 4. Criar constraints únicos se não existirem
+        try {
+          await pool.query(`
+            ALTER TABLE google.calendar_events 
+            ADD CONSTRAINT calendar_events_icaluid_unique 
+            UNIQUE (icaluid)
+          `);
+          console.log('✅ Constraint único para icaluid criado');
+        } catch (error) {
+          if (error.code === '23505') {
+            console.log('ℹ️ Constraint único para icaluid já existe');
+          } else {
+            console.warn('⚠️ Erro ao criar constraint icaluid:', error.message);
+          }
+        }
+        
+        try {
+          await pool.query(`
+            ALTER TABLE google.calendar_events 
+            ADD CONSTRAINT calendar_events_event_id_usuario_id_unique 
+            UNIQUE (event_id, usuario_id)
+          `);
+          console.log('✅ Constraint único para (event_id, usuario_id) criado');
+        } catch (error) {
+          if (error.code === '23505') {
+            console.log('ℹ️ Constraint único para (event_id, usuario_id) já existe');
+          } else {
+            console.warn('⚠️ Erro ao criar constraint event_id+usuario_id:', error.message);
+          }
+        }
+        
+        // 5. Criar índices para performance
+        await pool.query('CREATE INDEX IF NOT EXISTS idx_calendar_events_icaluid ON google.calendar_events(icaluid)');
+        await pool.query('CREATE INDEX IF NOT EXISTS idx_calendar_events_event_id ON google.calendar_events(event_id)');
+        await pool.query('CREATE INDEX IF NOT EXISTS idx_calendar_events_usuario_id ON google.calendar_events(usuario_id)');
+        console.log('✅ Índices criados');
+        
+        // 6. Estatísticas finais
+        const { rows: stats } = await pool.query(`
+          SELECT 
+            'Total de eventos' as info,
+            COUNT(*) as total
+          FROM google.calendar_events
+          UNION ALL
+          SELECT 
+            'Eventos com icaluid' as info,
+            COUNT(*) as total
+          FROM google.calendar_events 
+          WHERE icaluid IS NOT NULL
+          UNION ALL
+          SELECT 
+            'Eventos sem icaluid' as info,
+            COUNT(*) as total
+          FROM google.calendar_events 
+          WHERE icaluid IS NULL
+        `);
+        
+        console.log('📊 Estatísticas finais:');
+        stats.forEach(stat => {
+          console.log(`  - ${stat.info}: ${stat.total}`);
+        });
+        
+        console.log('🎉 Limpeza de duplicatas concluída!');
+        
+      } catch (error) {
+        console.error('❌ Erro na limpeza de duplicatas:', error.message);
+      }
+    });
+
+  } catch (error) {
+    console.error('Erro ao iniciar limpeza de duplicatas:', error);
+    // Não re-throw pois já respondemos 202
+  }
+};
+
+// Verificar estrutura da tabela Calendar
+const verificarEstruturaCalendar = async (req, res) => {
+  try {
+    const pool = require('../config/database');
+    
+    // Verificar colunas
+    const { rows: columns } = await pool.query(`
+      SELECT column_name, data_type, is_nullable
+      FROM information_schema.columns 
+      WHERE table_schema = 'google' 
+      AND table_name = 'calendar_events'
+      ORDER BY ordinal_position
+    `);
+    
+    // Verificar constraints
+    const { rows: constraints } = await pool.query(`
+      SELECT conname, contype
+      FROM pg_constraint 
+      WHERE conrelid = 'google.calendar_events'::regclass
+    `);
+    
+    // Verificar índices
+    const { rows: indexes } = await pool.query(`
+      SELECT indexname, indexdef
+      FROM pg_indexes 
+      WHERE tablename = 'calendar_events' 
+      AND schemaname = 'google'
+    `);
+    
+    // Estatísticas
+    const { rows: stats } = await pool.query(`
+      SELECT 
+        COUNT(*) as total_eventos,
+        COUNT(CASE WHEN icaluid IS NOT NULL THEN 1 END) as com_icaluid,
+        COUNT(CASE WHEN icaluid IS NULL THEN 1 END) as sem_icaluid
+      FROM google.calendar_events
+    `);
+    
+    res.json({
+      sucesso: true,
+      estrutura: {
+        colunas: columns,
+        constraints: constraints,
+        indices: indexes
+      },
+      estatisticas: stats[0]
+    });
+    
+  } catch (error) {
+    console.error('Erro ao verificar estrutura:', error);
+    res.status(500).json({ 
+      erro: 'Falha ao verificar estrutura da tabela', 
+      detalhes: error.message 
+    });
+  }
+};
+
+// Testar processamento de evento específico
+const testarEventoEspecifico = async (req, res) => {
+  try {
+    const { email, eventData } = req.body;
+    
+    if (!email || !eventData) {
+      return res.status(400).json({
+        sucesso: false,
+        erro: 'Email e eventData são obrigatórios'
+      });
+    }
+
+    console.log(`🧪 Testando processamento de evento específico para: ${email}`);
+    console.log('📋 Dados do evento:', JSON.stringify(eventData, null, 2));
+
+    // Responder imediatamente
+    res.status(202).json({
+      sucesso: true,
+      mensagem: 'Teste de evento específico iniciado em background',
+      usuario: email,
+      event_id: eventData.id,
+      icaluid: eventData.iCalUID,
+      timestamp: new Date().toISOString()
+    });
+
+    // Executar em background
+    setImmediate(async () => {
+      try {
+        const calendarServiceJWT = require('../services/calendarServiceJWT');
+        
+        // Processar o evento específico
+        const resultado = await calendarServiceJWT.processarEventoCalendarJWT(
+          eventData, 
+          email, 
+          'primary'
+        );
+        
+        console.log('✅ Teste concluído:', resultado);
+        
+      } catch (error) {
+        console.error('❌ Erro no teste:', error.message);
+      }
+    });
+
+  } catch (error) {
+    console.error('Erro ao iniciar teste:', error);
+    // Não re-throw pois já respondemos 202
+  }
+};
+
 module.exports = {
   syncCalendar,
   syncCalendarPorUsuario,
   webhookCalendar,
   configurarWebhookCalendar,
   testarWebhookCalendar,
-  forcarSincronizacaoCalendar
+  forcarSincronizacaoCalendar,
+  limparDuplicatasCalendar,
+  verificarEstruturaCalendar,
+  testarEventoEspecifico
 }; 

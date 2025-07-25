@@ -23,4 +23,13 @@ router.post('/testar-webhook', calendarController.testarWebhookCalendar);
 // Rota para forçar sincronização manual do Calendar
 router.post('/forcar-sincronizacao', calendarController.forcarSincronizacaoCalendar);
 
+// Rota para limpar duplicatas do Calendar
+router.post('/limpar-duplicatas', calendarController.limparDuplicatasCalendar);
+
+// Rota para verificar estrutura da tabela Calendar
+router.get('/verificar-estrutura', calendarController.verificarEstruturaCalendar);
+
+// Rota para testar evento específico
+router.post('/testar-evento-especifico', calendarController.testarEventoEspecifico);
+
 module.exports = router; 
