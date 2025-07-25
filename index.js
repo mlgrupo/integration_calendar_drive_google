@@ -49,7 +49,7 @@ const limiter = rateLimit({
   legacyHeaders: false,
 });
 
-app.use('/api/', limiter);
+app.use('/api', limiter);
 
 // Middlewares de parsing
 app.use(express.json({ 
