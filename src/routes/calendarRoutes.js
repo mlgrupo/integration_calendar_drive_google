@@ -38,4 +38,10 @@ router.get('/verificar-webhooks', calendarController.verificarWebhooksCalendar);
 // Rota para forçar configuração de webhooks
 router.post('/forcar-configuracao-webhooks', calendarController.forcarConfiguracaoWebhooks);
 
+// Rota para corrigir horários dos eventos existentes
+router.post('/corrigir-horarios', calendarController.corrigirHorariosEventos);
+
+// Rota para criar tabelas de webhook
+router.post('/criar-tabelas-webhook', calendarController.criarTabelasWebhook);
+
 module.exports = router; 

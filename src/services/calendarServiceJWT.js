@@ -2,6 +2,7 @@ const { getCalendarClient } = require('../config/googleJWT');
 const userModel = require('../models/userModel');
 const calendarEventModel = require('../models/calendarEventModel');
 const { v4: uuidv4 } = require('uuid');
+const { converterParaSP } = require('../utils/formatDate');
 
 // Limpar IDs do Calendar (remover timestamps mas preservar IDs que começam com _)
 function cleanId(id) {
@@ -86,6 +87,8 @@ exports.syncCalendarEventsJWT = async () => {
               // Log detalhado antes do upsert
               console.log(`[CalendarSync] Upsert: usuario_id=${usuario.id}, event_id=${evento.id}, icaluid=${evento.iCalUID}, summary=${evento.summary}, updated=${evento.updated}`);
               
+
+              
               // Atualizar sempre (upsert)
               await calendarEventModel.upsertEvent({
                 usuario_id: usuario.id,
@@ -94,8 +97,8 @@ exports.syncCalendarEventsJWT = async () => {
                 titulo: evento.summary || (isReuniao ? 'Reunião sem título' : 'Evento sem título'),
                 descricao: evento.description || null,
                 localizacao: evento.location || null,
-                data_inicio: evento.start?.dateTime ? new Date(evento.start.dateTime) : null,
-                data_fim: evento.end?.dateTime ? new Date(evento.end.dateTime) : null,
+                data_inicio: converterParaSP(evento.start?.dateTime),
+                data_fim: converterParaSP(evento.end?.dateTime),
                 duracao_minutos: evento.start?.dateTime && evento.end?.dateTime ? 
                   Math.round((new Date(evento.end.dateTime) - new Date(evento.start.dateTime)) / (1000 * 60)) : null,
                 recorrente: !!evento.recurrence,
@@ -159,7 +162,7 @@ exports.processarEventoCalendarJWT = async (evento, userEmail, calendarId = 'pri
     const isReuniao = eventoAtualizado.conferenceData || 
       (eventoAtualizado.description && eventoAtualizado.description.toLowerCase().includes('meet')) ||
       (eventoAtualizado.description && eventoAtualizado.description.toLowerCase().includes('zoom'));
-
+    
     // Atualizar evento
     await calendarEventModel.upsertEvent({
       usuario_id: usuario.id,
@@ -168,8 +171,8 @@ exports.processarEventoCalendarJWT = async (evento, userEmail, calendarId = 'pri
       titulo: eventoAtualizado.summary || (isReuniao ? 'Reunião sem título' : 'Evento sem título'),
       descricao: eventoAtualizado.description || null,
       localizacao: eventoAtualizado.location || null,
-      data_inicio: eventoAtualizado.start?.dateTime ? new Date(eventoAtualizado.start.dateTime) : null,
-      data_fim: eventoAtualizado.end?.dateTime ? new Date(eventoAtualizado.end.dateTime) : null,
+      data_inicio: converterParaSP(eventoAtualizado.start?.dateTime),
+      data_fim: converterParaSP(eventoAtualizado.end?.dateTime),
       duracao_minutos: eventoAtualizado.start?.dateTime && eventoAtualizado.end?.dateTime ? 
         Math.round((new Date(eventoAtualizado.end.dateTime) - new Date(eventoAtualizado.start.dateTime)) / (1000 * 60)) : null,
       recorrente: !!eventoAtualizado.recurrence,
@@ -256,7 +259,7 @@ exports.processarEventoCalendarJWT = async (evento, userEmail, calendarId = 'pri
     const isReuniao = evento.conferenceData || 
       (evento.description && evento.description.toLowerCase().includes('meet')) ||
       (evento.description && evento.description.toLowerCase().includes('zoom'));
-
+    
     // Salvar/atualizar evento
     await calendarEventModel.upsertEvent({
       usuario_id: usuario.id,
@@ -265,8 +268,8 @@ exports.processarEventoCalendarJWT = async (evento, userEmail, calendarId = 'pri
       titulo: evento.summary || (isReuniao ? 'Reunião sem título' : 'Evento sem título'),
       descricao: evento.description || null,
       localizacao: evento.location || null,
-      data_inicio: evento.start?.dateTime ? new Date(evento.start.dateTime) : null,
-      data_fim: evento.end?.dateTime ? new Date(evento.end.dateTime) : null,
+      data_inicio: converterParaSP(evento.start?.dateTime),
+      data_fim: converterParaSP(evento.end?.dateTime),
       duracao_minutos: evento.start?.dateTime && evento.end?.dateTime ? 
         Math.round((new Date(evento.end.dateTime) - new Date(evento.start.dateTime)) / (1000 * 60)) : null,
       recorrente: !!evento.recurrence,

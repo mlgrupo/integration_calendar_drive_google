@@ -484,20 +484,33 @@ const verificarWebhooksCalendar = async (req, res) => {
     const usuarios = await userModel.getAllUsers();
     console.log(`📋 Total de usuários: ${usuarios.length}`);
     
-    // 2. Verificar canais de webhook no banco
-    const { rows: canais } = await pool.query(`
-      SELECT 
-        cc.*,
-        u.email as usuario_email
-      FROM google.calendar_channels cc
-      LEFT JOIN google.usuarios u ON cc.usuario_id = u.id
-      ORDER BY cc.created_at DESC
-    `);
-    
-    console.log(`📡 Canais de webhook encontrados: ${canais.length}`);
+        // 2. Verificar estrutura da tabela calendar_channels primeiro
+    let canais = [];
+    try {
+      const { rows: estrutura } = await pool.query(`
+        SELECT column_name, data_type 
+        FROM information_schema.columns 
+        WHERE table_schema = 'google' 
+        AND table_name = 'calendar_channels'
+        ORDER BY ordinal_position
+      `);
+      
+      console.log('📋 Estrutura da tabela calendar_channels:', estrutura);
+      
+      // Verificar se a tabela existe e tem dados
+      const { rows: canaisData } = await pool.query(`
+        SELECT * FROM google.calendar_channels LIMIT 5
+      `);
+      
+      canais = canaisData;
+      console.log(`📡 Canais de webhook encontrados: ${canais.length}`);
+      
+    } catch (error) {
+      console.warn('⚠️ Tabela calendar_channels não existe ou tem estrutura diferente:', error.message);
+      canais = [];
+    }
     
     // 3. Verificar webhooks ativos via API do Google
-    const webhookService = require('../services/webhookService');
     const resultados = [];
     
     for (const usuario of usuarios) {
@@ -538,17 +551,24 @@ const verificarWebhooksCalendar = async (req, res) => {
     }
     
     // 4. Verificar logs de webhook recentes
-    const { rows: logs } = await pool.query(`
-      SELECT 
-        l.*,
-        u.email as usuario_email
-      FROM google.logs l
-      LEFT JOIN google.usuarios u ON l.usuario_id = u.id
-      WHERE l.tipo_evento LIKE '%webhook%' 
-      OR l.tipo_evento LIKE '%calendar%'
-      ORDER BY l.timestamp_evento DESC
-      LIMIT 10
-    `);
+    let logs = [];
+    try {
+      const { rows: logsData } = await pool.query(`
+        SELECT 
+          l.*,
+          u.email as usuario_email
+        FROM google.logs l
+        LEFT JOIN google.usuarios u ON l.usuario_id = u.id
+        WHERE l.tipo_evento LIKE '%webhook%' 
+        OR l.tipo_evento LIKE '%calendar%'
+        ORDER BY l.timestamp_evento DESC
+        LIMIT 10
+      `);
+      logs = logsData;
+    } catch (error) {
+      console.warn('⚠️ Erro ao buscar logs:', error.message);
+      logs = [];
+    }
     
     res.json({
       sucesso: true,
@@ -645,6 +665,212 @@ const forcarConfiguracaoWebhooks = async (req, res) => {
   }
 };
 
+// Corrigir horários dos eventos existentes para fuso de São Paulo
+const corrigirHorariosEventos = async (req, res) => {
+  try {
+    console.log('🕐 Iniciando correção de horários dos eventos...');
+    
+    // Responder imediatamente
+    res.status(202).json({
+      sucesso: true,
+      mensagem: 'Correção de horários iniciada em background',
+      timestamp: new Date().toISOString()
+    });
+
+    // Executar em background
+    setImmediate(async () => {
+      try {
+        const pool = require('../config/database');
+        const { converterParaSP } = require('../utils/formatDate');
+        
+        // Buscar todos os eventos
+        const { rows: eventos } = await pool.query(`
+          SELECT id, event_id, data_inicio, data_fim, titulo
+          FROM google.calendar_events
+          WHERE data_inicio IS NOT NULL
+          ORDER BY data_inicio DESC
+        `);
+        
+        console.log(`📅 Encontrados ${eventos.length} eventos para corrigir`);
+        
+        let corrigidos = 0;
+        let erros = 0;
+        
+        for (const evento of eventos) {
+          try {
+            // Converter horários para SP
+            const dataInicioSP = converterParaSP(evento.data_inicio.toISOString());
+            const dataFimSP = converterParaSP(evento.data_fim.toISOString());
+            
+            // Atualizar no banco
+            await pool.query(`
+              UPDATE google.calendar_events 
+              SET 
+                data_inicio = $1,
+                data_fim = $2,
+                updated_at = NOW()
+              WHERE id = $3
+            `, [dataInicioSP, dataFimSP, evento.id]);
+            
+            console.log(`✅ Evento corrigido: ${evento.titulo} (${evento.event_id})`);
+            console.log(`   Antes: ${evento.data_inicio} → ${evento.data_fim}`);
+            console.log(`   Depois: ${dataInicioSP} → ${dataFimSP}`);
+            
+            corrigidos++;
+            
+          } catch (error) {
+            console.error(`❌ Erro ao corrigir evento ${evento.id}:`, error.message);
+            erros++;
+          }
+        }
+        
+        console.log(`🎉 Correção concluída: ${corrigidos} corrigidos, ${erros} erros`);
+        
+      } catch (error) {
+        console.error('❌ Erro geral na correção:', error.message);
+      }
+    });
+
+  } catch (error) {
+    console.error('Erro ao iniciar correção:', error);
+    // Não re-throw pois já respondemos 202
+  }
+};
+
+// Criar tabelas de webhook se não existirem
+const criarTabelasWebhook = async (req, res) => {
+  try {
+    console.log('🔧 Verificando e criando tabelas de webhook...');
+    
+    const pool = require('../config/database');
+    
+    // 1. Verificar se a tabela calendar_channels existe
+    const { rows: calendarExists } = await pool.query(`
+      SELECT EXISTS (
+        SELECT 1 FROM information_schema.tables 
+        WHERE table_schema = 'google' 
+        AND table_name = 'calendar_channels'
+      ) as exists
+    `);
+    
+    if (!calendarExists[0].exists) {
+      console.log('📝 Criando tabela calendar_channels...');
+      await pool.query(`
+        CREATE TABLE google.calendar_channels (
+          id SERIAL PRIMARY KEY,
+          usuario_id INTEGER NOT NULL,
+          resource_id VARCHAR(255) NOT NULL,
+          channel_id VARCHAR(255) NOT NULL,
+          calendar_id VARCHAR(255) NOT NULL DEFAULT 'primary',
+          created_at TIMESTAMP DEFAULT NOW(),
+          updated_at TIMESTAMP DEFAULT NOW(),
+          expires_at TIMESTAMP,
+          active BOOLEAN DEFAULT true
+        )
+      `);
+      
+      // Criar índices
+      await pool.query('CREATE INDEX idx_calendar_channels_usuario_id ON google.calendar_channels(usuario_id)');
+      await pool.query('CREATE INDEX idx_calendar_channels_resource_id ON google.calendar_channels(resource_id)');
+      await pool.query('CREATE INDEX idx_calendar_channels_channel_id ON google.calendar_channels(channel_id)');
+      await pool.query('CREATE INDEX idx_calendar_channels_active ON google.calendar_channels(active)');
+      
+      // Criar constraint único
+      await pool.query(`
+        ALTER TABLE google.calendar_channels 
+        ADD CONSTRAINT calendar_channels_usuario_calendar_unique 
+        UNIQUE (usuario_id, calendar_id)
+      `);
+      
+      console.log('✅ Tabela calendar_channels criada!');
+    } else {
+      console.log('ℹ️ Tabela calendar_channels já existe');
+    }
+    
+    // 2. Verificar se a tabela drive_channels existe
+    const { rows: driveExists } = await pool.query(`
+      SELECT EXISTS (
+        SELECT 1 FROM information_schema.tables 
+        WHERE table_schema = 'google' 
+        AND table_name = 'drive_channels'
+      ) as exists
+    `);
+    
+    if (!driveExists[0].exists) {
+      console.log('📝 Criando tabela drive_channels...');
+      await pool.query(`
+        CREATE TABLE google.drive_channels (
+          id SERIAL PRIMARY KEY,
+          usuario_id INTEGER NOT NULL,
+          resource_id VARCHAR(255) NOT NULL,
+          channel_id VARCHAR(255) NOT NULL,
+          page_token VARCHAR(255),
+          created_at TIMESTAMP DEFAULT NOW(),
+          updated_at TIMESTAMP DEFAULT NOW(),
+          expires_at TIMESTAMP,
+          active BOOLEAN DEFAULT true
+        )
+      `);
+      
+      // Criar índices
+      await pool.query('CREATE INDEX idx_drive_channels_usuario_id ON google.drive_channels(usuario_id)');
+      await pool.query('CREATE INDEX idx_drive_channels_resource_id ON google.drive_channels(resource_id)');
+      await pool.query('CREATE INDEX idx_drive_channels_channel_id ON google.drive_channels(channel_id)');
+      await pool.query('CREATE INDEX idx_drive_channels_active ON google.drive_channels(active)');
+      
+      // Criar constraint único
+      await pool.query(`
+        ALTER TABLE google.drive_channels 
+        ADD CONSTRAINT drive_channels_usuario_unique 
+        UNIQUE (usuario_id)
+      `);
+      
+      console.log('✅ Tabela drive_channels criada!');
+    } else {
+      console.log('ℹ️ Tabela drive_channels já existe');
+    }
+    
+    // 3. Mostrar estrutura das tabelas
+    const { rows: calendarStructure } = await pool.query(`
+      SELECT column_name, data_type, is_nullable
+      FROM information_schema.columns 
+      WHERE table_schema = 'google' 
+      AND table_name = 'calendar_channels'
+      ORDER BY ordinal_position
+    `);
+    
+    const { rows: driveStructure } = await pool.query(`
+      SELECT column_name, data_type, is_nullable
+      FROM information_schema.columns 
+      WHERE table_schema = 'google' 
+      AND table_name = 'drive_channels'
+      ORDER BY ordinal_position
+    `);
+    
+    res.json({
+      sucesso: true,
+      mensagem: 'Tabelas de webhook verificadas/criadas com sucesso',
+      tabelas: {
+        calendar_channels: {
+          existe: calendarExists[0].exists,
+          estrutura: calendarStructure
+        },
+        drive_channels: {
+          existe: driveExists[0].exists,
+          estrutura: driveStructure
+        }
+      }
+    });
+    
+  } catch (error) {
+    console.error('Erro ao criar tabelas:', error);
+    res.status(500).json({ 
+      erro: 'Falha ao criar tabelas de webhook', 
+      detalhes: error.message 
+    });
+  }
+};
+
 module.exports = {
   syncCalendar,
   syncCalendarPorUsuario,
@@ -656,5 +882,7 @@ module.exports = {
   verificarEstruturaCalendar,
   testarEventoEspecifico,
   verificarWebhooksCalendar,
-  forcarConfiguracaoWebhooks
+  forcarConfiguracaoWebhooks,
+  corrigirHorariosEventos,
+  criarTabelasWebhook
 }; 
