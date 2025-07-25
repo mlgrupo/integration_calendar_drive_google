@@ -50,4 +50,7 @@ router.post('/verificar-estrutura-logs', calendarController.verificarEstruturaLo
 // Rota para testar sincronização de eventos passados
 router.post('/testar-eventos-passados', calendarController.testarEventosPassados);
 
+// Rota para corrigir constraints do icaluid
+router.post('/corrigir-constraints-icaluid', calendarController.corrigirConstraintsIcaluid);
+
 module.exports = router; 

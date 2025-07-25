@@ -1113,6 +1113,152 @@ const testarEventosPassados = async (req, res) => {
   }
 };
 
+// Corrigir constraints do icaluid
+const corrigirConstraintsIcaluid = async (req, res) => {
+  try {
+    console.log('🔧 Corrigindo constraints do icaluid...');
+    
+    const pool = require('../config/database');
+    
+    // Responder imediatamente
+    res.status(202).json({
+      sucesso: true,
+      mensagem: 'Correção de constraints iniciada em background',
+      timestamp: new Date().toISOString()
+    });
+
+    // Executar em background
+    setImmediate(async () => {
+      try {
+        // 1. Verificar constraints atuais
+        const { rows: constraints } = await pool.query(`
+          SELECT 
+            tc.constraint_name,
+            tc.table_name,
+            kcu.column_name,
+            tc.constraint_type
+          FROM information_schema.table_constraints tc
+          JOIN information_schema.key_column_usage kcu 
+            ON tc.constraint_name = kcu.constraint_name
+          WHERE tc.table_schema = 'google' 
+            AND tc.table_name = 'calendar_events'
+            AND (kcu.column_name = 'icaluid' OR tc.constraint_type = 'UNIQUE')
+        `);
+        
+        console.log('📋 Constraints atuais:', constraints);
+        
+        // 2. Verificar duplicatas de icaluid
+        const { rows: duplicatas } = await pool.query(`
+          SELECT 
+            icaluid,
+            COUNT(*) as total,
+            STRING_AGG(event_id || ' (' || usuario_id || ')', ', ') as eventos
+          FROM google.calendar_events 
+          WHERE icaluid IS NOT NULL 
+            AND icaluid != ''
+          GROUP BY icaluid 
+          HAVING COUNT(*) > 1
+          ORDER BY total DESC
+        `);
+        
+        console.log('📊 Duplicatas de icaluid:', duplicatas);
+        
+        // 3. Remover constraint única simples do icaluid se existir
+        const { rows: temConstraint } = await pool.query(`
+          SELECT EXISTS (
+            SELECT 1 FROM information_schema.table_constraints tc
+            JOIN information_schema.key_column_usage kcu 
+              ON tc.constraint_name = kcu.constraint_name
+            WHERE tc.table_schema = 'google' 
+              AND tc.table_name = 'calendar_events'
+              AND kcu.column_name = 'icaluid'
+              AND tc.constraint_type = 'UNIQUE'
+          ) as tem_constraint
+        `);
+        
+        if (temConstraint[0].tem_constraint) {
+          console.log('🗑️ Removendo constraint única simples do icaluid...');
+          
+          const { rows: constraintName } = await pool.query(`
+            SELECT tc.constraint_name
+            FROM information_schema.table_constraints tc
+            JOIN information_schema.key_column_usage kcu 
+              ON tc.constraint_name = kcu.constraint_name
+            WHERE tc.table_schema = 'google' 
+              AND tc.table_name = 'calendar_events'
+              AND kcu.column_name = 'icaluid'
+              AND tc.constraint_type = 'UNIQUE'
+          `);
+          
+          if (constraintName[0]) {
+            await pool.query(`ALTER TABLE google.calendar_events DROP CONSTRAINT ${constraintName[0].constraint_name}`);
+            console.log(`✅ Constraint removida: ${constraintName[0].constraint_name}`);
+          }
+        }
+        
+        // 4. Criar constraint única composta (icaluid, usuario_id)
+        console.log('🔧 Criando constraint única composta (icaluid, usuario_id)...');
+        await pool.query(`
+          ALTER TABLE google.calendar_events 
+          ADD CONSTRAINT calendar_events_icaluid_usuario_unique 
+          UNIQUE (icaluid, usuario_id)
+        `);
+        console.log('✅ Constraint única composta criada');
+        
+        // 5. Garantir constraint única em (event_id, usuario_id)
+        console.log('🔧 Verificando constraint (event_id, usuario_id)...');
+        await pool.query(`
+          ALTER TABLE google.calendar_events 
+          ADD CONSTRAINT calendar_events_event_id_usuario_unique 
+          UNIQUE (event_id, usuario_id)
+        `);
+        console.log('✅ Constraint (event_id, usuario_id) criada/verificada');
+        
+        // 6. Verificar constraints finais
+        const { rows: constraintsFinais } = await pool.query(`
+          SELECT 
+            tc.constraint_name,
+            tc.table_name,
+            STRING_AGG(kcu.column_name, ', ' ORDER BY kcu.ordinal_position) as columns,
+            tc.constraint_type
+          FROM information_schema.table_constraints tc
+          JOIN information_schema.key_column_usage kcu 
+            ON tc.constraint_name = kcu.constraint_name
+          WHERE tc.table_schema = 'google' 
+            AND tc.table_name = 'calendar_events'
+            AND tc.constraint_type = 'UNIQUE'
+          GROUP BY tc.constraint_name, tc.table_name, tc.constraint_type
+          ORDER BY tc.constraint_name
+        `);
+        
+        console.log('📋 Constraints finais:', constraintsFinais);
+        
+        // 7. Estatísticas
+        const { rows: estatisticas } = await pool.query(`
+          SELECT 
+            COUNT(*) as total_eventos,
+            COUNT(DISTINCT icaluid) as icaluids_unicos,
+            COUNT(DISTINCT event_id) as event_ids_unicos,
+            COUNT(DISTINCT usuario_id) as usuarios_unicos,
+            COUNT(*) FILTER (WHERE icaluid IS NOT NULL AND icaluid != '') as eventos_com_icaluid,
+            COUNT(*) FILTER (WHERE icaluid IS NULL OR icaluid = '') as eventos_sem_icaluid
+          FROM google.calendar_events
+        `);
+        
+        console.log('📊 Estatísticas finais:', estatisticas[0]);
+        console.log('✅ Correção de constraints concluída!');
+        
+      } catch (error) {
+        console.error('❌ Erro na correção de constraints:', error.message);
+      }
+    });
+
+  } catch (error) {
+    console.error('Erro ao iniciar correção:', error);
+    // Não re-throw pois já respondemos 202
+  }
+};
+
 module.exports = {
   syncCalendar,
   syncCalendarPorUsuario,
@@ -1128,5 +1274,6 @@ module.exports = {
   corrigirHorariosEventos,
   criarTabelasWebhook,
   verificarEstruturaLogs,
-  testarEventosPassados
+  testarEventosPassados,
+  corrigirConstraintsIcaluid
 }; 
