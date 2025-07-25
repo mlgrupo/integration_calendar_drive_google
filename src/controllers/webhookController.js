@@ -5,9 +5,13 @@ const userModel = require('../models/userModel');
 const calendarServiceJWT = require('../services/calendarServiceJWT');
 const pool = require('../config/database');
 
-// Cache para evitar processamento duplicado de webhooks
+// Cache inteligente para evitar processamento duplicado de webhooks
 const webhookCache = new Map();
-const WEBHOOK_CACHE_TTL = 300000; // 5 minutos (aumentado drasticamente)
+const WEBHOOK_CACHE_TTL = 300000; // 5 minutos
+
+// Cache para mudanças já processadas (evita reprocessar a mesma mudança)
+const processedChangesCache = new Map();
+const CHANGES_CACHE_TTL = 600000; // 10 minutos
 
 // Função para verificar se webhook já foi processado recentemente
 const isWebhookProcessed = (resourceId, channelId) => {
@@ -15,60 +19,71 @@ const isWebhookProcessed = (resourceId, channelId) => {
   const now = Date.now();
   const cached = webhookCache.get(key);
   
-  console.log(`🔍 Verificando cache para: ${key}`);
-  console.log(`   Cache atual:`, cached ? `existe (${now - cached.timestamp}ms atrás)` : 'não existe');
-  
   if (cached && (now - cached.timestamp) < WEBHOOK_CACHE_TTL) {
-    console.log(`   ⚠️ Webhook já processado há ${Math.round((now - cached.timestamp)/1000)}s, ignorando...`);
+    console.log(`⚠️ Webhook já processado há ${Math.round((now - cached.timestamp)/1000)}s, ignorando...`);
     return true;
   }
   
-  console.log(`   ✅ Processando webhook (novo ou expirado)`);
+  console.log(`✅ Processando webhook (novo ou expirado)`);
   webhookCache.set(key, { timestamp: now });
   return false;
 };
 
-// Limpar cache antigo periodicamente
+// Função para verificar se uma mudança específica já foi processada
+const isChangeProcessed = (changeId, resourceId) => {
+  const key = `${resourceId}-${changeId}`;
+  const now = Date.now();
+  const cached = processedChangesCache.get(key);
+  
+  if (cached && (now - cached.timestamp) < CHANGES_CACHE_TTL) {
+    return true;
+  }
+  
+  processedChangesCache.set(key, { timestamp: now });
+  return false;
+};
+
+// Limpar caches antigos periodicamente
 setInterval(() => {
   const now = Date.now();
+  
+  // Limpar webhook cache
   for (const [key, value] of webhookCache.entries()) {
     if (now - value.timestamp > WEBHOOK_CACHE_TTL) {
       webhookCache.delete(key);
     }
   }
+  
+  // Limpar changes cache
+  for (const [key, value] of processedChangesCache.entries()) {
+    if (now - value.timestamp > CHANGES_CACHE_TTL) {
+      processedChangesCache.delete(key);
+    }
+  }
 }, 60000); // Limpar a cada minuto
 
-// Webhook do Drive (AGORA USA JWT)
+// Webhook do Drive (AGORA USA JWT) - OTIMIZADO
 exports.driveWebhook = async (req, res) => {
   try {
     console.log('=== WEBHOOK DRIVE RECEBIDO (JWT) ===');
-    console.log('Headers:', req.headers);
-    console.log('Body:', JSON.stringify(req.body, null, 2));
-    console.log('IP:', req.ip);
-    console.log('User-Agent:', req.get('User-Agent'));
-
-    // Se for notificação do Google (body vazio, mas headers presentes)
+    
     const resourceId = req.headers['x-goog-resource-id'];
     const channelId = req.headers['x-goog-channel-id'];
     const resourceState = req.headers['x-goog-resource-state'];
     const messageNumber = req.headers['x-goog-message-number'];
-    const pageTokenHeader = req.headers['x-goog-resource-uri']?.split('pageToken=')[1]?.replace(/[^0-9]/g, '');
 
-    // Ignorar webhooks de sincronização (muito frequentes e desnecessários)
+    // 1. IGNORAR webhooks de sincronização (muito frequentes e desnecessários)
     if (resourceState === 'sync') {
       console.log('⚠️ Ignorando webhook de sincronização (resourceState: sync)');
       return res.status(200).json({ sucesso: true, processado: false, motivo: 'sync_ignorado' });
     }
 
-    // Verificar se já foi processado recentemente
+    // 2. Verificar se webhook já foi processado recentemente
     if (isWebhookProcessed(resourceId, channelId)) {
-      console.log('⚠️ Webhook do Drive já processado recentemente, ignorando...');
       return res.status(200).json({ sucesso: true, processado: false, motivo: 'já_processado' });
     }
 
-    // Aqui você precisa mapear resourceId/channelId para o usuário correto
-    // Exemplo: buscar no banco qual usuário está associado a esse canal/resourceId
-    // Para simplificação, vamos assumir que você tem uma função buscarUsuarioPorResourceId(resourceId)
+    // 3. Buscar usuário pelo resourceId
     let userEmail = await userModel.getUserByResourceId(resourceId);
     if (!userEmail) {
       userEmail = process.env.ADMIN_EMAIL || 'leorosso@reconectaoficial.com.br';
@@ -78,80 +93,96 @@ exports.driveWebhook = async (req, res) => {
     const { getDriveClient } = require('../config/googleJWT');
     const drive = await getDriveClient(userEmail);
 
-    // Buscar o último pageToken salvo para esse usuário
+    // 4. Buscar o último pageToken salvo para esse usuário
     let lastPageToken = await userModel.getDrivePageToken(userEmail);
-    if (!lastPageToken && pageTokenHeader) {
-      lastPageToken = pageTokenHeader;
-    }
     if (!lastPageToken) {
-      // Se não encontrar, obter um novo
       const startPageTokenResponse = await drive.changes.getStartPageToken();
       lastPageToken = startPageTokenResponse.data.startPageToken;
     }
 
-    // Buscar as mudanças
+    // 5. Buscar APENAS mudanças novas (limitado a 100 para evitar sobrecarga)
     const changes = await drive.changes.list({
-      pageToken: lastPageToken
+      pageToken: lastPageToken,
+      pageSize: 100, // Limitar para evitar sobrecarga
+      includeItemsFromAllDrives: false,
+      supportsAllDrives: false
     });
 
     if (changes.data.changes && changes.data.changes.length > 0) {
       console.log(`🔄 Processando ${changes.data.changes.length} mudanças do Drive`);
+      
+      let mudancasProcessadas = 0;
+      let mudancasIgnoradas = 0;
+      
       for (const change of changes.data.changes) {
         try {
-          await driveServiceJWT.processarMudancaDriveJWT(change.fileId, userEmail);
+          // 6. Verificar se esta mudança específica já foi processada
+          if (isChangeProcessed(change.changeId, resourceId)) {
+            mudancasIgnoradas++;
+            continue;
+          }
+
+          // 7. Processar apenas mudanças REAIS (não metadados)
+          if (change.fileId && change.file) {
+            await driveServiceJWT.processarArquivoDriveJWT(change.file, userEmail);
+            mudancasProcessadas++;
+          } else if (change.fileId && change.removed) {
+            // Arquivo removido - marcar como deletado no banco
+            await driveServiceJWT.marcarArquivoComoDeletado(change.fileId, userEmail);
+            mudancasProcessadas++;
+          }
         } catch (error) {
           console.error('Erro ao processar mudança do Drive:', error.message);
+          // Não re-throw para evitar loops infinitos
         }
       }
+      
+      console.log(`✅ Drive: ${mudancasProcessadas} mudanças processadas, ${mudancasIgnoradas} ignoradas`);
+      
+      // 8. Salvar o novo pageToken apenas se processou mudanças
+      if (mudancasProcessadas > 0 && changes.data.newStartPageToken) {
+        await userModel.saveDrivePageToken(userEmail, changes.data.newStartPageToken);
+      }
     } else {
-      console.log('⚠️ Nenhuma mudança encontrada no Drive para este pageToken');
+      console.log('⚠️ Nenhuma mudança nova encontrada no Drive');
     }
 
-    // Salvar o novo pageToken para o usuário
-    if (changes.data.newStartPageToken) {
-      await userModel.saveDrivePageToken(userEmail, resourceId, channelId, changes.data.newStartPageToken);
-    }
-
-    res.status(200).json({ sucesso: true, processado: true, timestamp: new Date().toISOString() });
+    res.status(200).json({ 
+      sucesso: true, 
+      processado: true, 
+      timestamp: new Date().toISOString() 
+    });
   } catch (error) {
     console.error('❌ Erro geral ao processar webhook do Drive:', error);
-    res.status(500).json({ erro: 'Falha ao processar webhook do Drive', detalhes: error.message, timestamp: new Date().toISOString() });
+    res.status(500).json({ 
+      erro: 'Falha ao processar webhook do Drive', 
+      detalhes: error.message, 
+      timestamp: new Date().toISOString() 
+    });
   }
 };
 
-// Webhook do Calendar (AGORA USA JWT)
+// Webhook do Calendar (OTIMIZADO)
 exports.calendarWebhook = async (req, res) => {
   try {
-    console.log('=== WEBHOOK CALENDAR RECEBIDO (JWT) ===');
-    console.log('Headers:', req.headers);
-    console.log('Body:', JSON.stringify(req.body, null, 2));
-    console.log('IP:', req.ip);
-    console.log('User-Agent:', req.get('User-Agent'));
-
-    // Verificar se é um desafio de verificação
-    if (req.body && req.body.type === 'web_hook_challenge') {
-      return res.status(200).json({ challenge: req.body.challenge });
-    }
-
-    // Se for notificação do Google (body vazio, mas headers presentes)
+    console.log('=== WEBHOOK CALENDAR RECEBIDO ===');
+    
     const resourceId = req.headers['x-goog-resource-id'];
     const channelId = req.headers['x-goog-channel-id'];
     const resourceState = req.headers['x-goog-resource-state'];
-    const messageNumber = req.headers['x-goog-message-number'];
 
-    // Ignorar webhooks de sincronização (muito frequentes e desnecessários)
+    // 1. IGNORAR webhooks de sincronização
     if (resourceState === 'sync') {
-      console.log('⚠️ Ignorando webhook de sincronização do Calendar (resourceState: sync)');
+      console.log('⚠️ Ignorando webhook de sincronização (resourceState: sync)');
       return res.status(200).json({ sucesso: true, processado: false, motivo: 'sync_ignorado' });
     }
 
-    // Verificar se já foi processado recentemente
+    // 2. Verificar se webhook já foi processado recentemente
     if (isWebhookProcessed(resourceId, channelId)) {
-      console.log('⚠️ Webhook do Calendar já processado recentemente, ignorando...');
       return res.status(200).json({ sucesso: true, processado: false, motivo: 'já_processado' });
     }
 
-    // Buscar usuário pelo resourceId do canal
+    // 3. Buscar usuário pelo resourceId do canal
     let userEmail = await userModel.getUserByCalendarResourceId(resourceId);
     if (!userEmail) {
       userEmail = process.env.ADMIN_EMAIL || 'leorosso@reconectaoficial.com.br';
@@ -161,16 +192,16 @@ exports.calendarWebhook = async (req, res) => {
     const { getCalendarClient } = require('../config/googleJWT');
     const calendar = await getCalendarClient(userEmail);
 
-    // Buscar o calendarId associado ao canal
+    // 4. Buscar o calendarId associado ao canal
     const { rows } = await pool.query(
       'SELECT calendar_id FROM google.calendar_channels WHERE resource_id = $1',
       [resourceId]
     );
     const calendarId = rows[0]?.calendar_id || 'primary';
 
-    // Buscar eventos atualizados desde a última sincronização
+    // 5. Buscar APENAS eventos modificados recentemente (últimas 2 horas)
     const now = new Date();
-    const timeMin = new Date(now.getTime() - (24 * 60 * 60 * 1000)); // Últimas 24 horas
+    const timeMin = new Date(now.getTime() - (2 * 60 * 60 * 1000)); // Últimas 2 horas
     const timeMax = new Date(now.getTime() + (7 * 24 * 60 * 60 * 1000)); // Próximos 7 dias
 
     try {
@@ -179,25 +210,36 @@ exports.calendarWebhook = async (req, res) => {
         timeMin: timeMin.toISOString(),
         timeMax: timeMax.toISOString(),
         singleEvents: true,
-        orderBy: 'startTime'
+        orderBy: 'startTime',
+        maxResults: 50 // Limitar para evitar sobrecarga
       });
 
       if (events.data.items && events.data.items.length > 0) {
         console.log(`🔄 Processando ${events.data.items.length} eventos do Calendar`);
+        
+        let eventosProcessados = 0;
+        
         for (const event of events.data.items) {
           try {
+            // 6. Verificar se este evento específico já foi processado recentemente
+            const eventKey = `${resourceId}-${event.id}-${event.updated}`;
+            if (isChangeProcessed(eventKey, resourceId)) {
+              continue;
+            }
+            
             await calendarServiceJWT.processarEventoCalendarJWT(event, userEmail, calendarId);
+            eventosProcessados++;
           } catch (error) {
             console.error('Erro ao processar evento do Calendar:', error.message);
-            // Não re-throw para evitar loops infinitos
           }
         }
+        
+        console.log(`✅ Calendar: ${eventosProcessados} eventos processados`);
       } else {
-        console.log('⚠️ Nenhum evento encontrado no Calendar para este período');
+        console.log('⚠️ Nenhum evento modificado recentemente encontrado no Calendar');
       }
     } catch (apiError) {
       console.error('❌ Erro ao buscar eventos da API do Calendar:', apiError.message);
-      // Se der erro 403 (Forbidden), pode ser problema de permissão
       if (apiError.response && apiError.response.status === 403) {
         console.warn('⚠️ Erro 403 - Verificar permissões do usuário:', userEmail);
       }
@@ -206,7 +248,11 @@ exports.calendarWebhook = async (req, res) => {
     res.status(200).json({ sucesso: true, processado: true, timestamp: new Date().toISOString() });
   } catch (error) {
     console.error('❌ Erro geral ao processar webhook do Calendar:', error);
-    res.status(500).json({ erro: 'Falha ao processar webhook do Calendar', detalhes: error.message, timestamp: new Date().toISOString() });
+    res.status(500).json({ 
+      erro: 'Falha ao processar webhook do Calendar', 
+      detalhes: error.message, 
+      timestamp: new Date().toISOString() 
+    });
   }
 };
 

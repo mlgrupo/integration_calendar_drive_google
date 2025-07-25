@@ -92,9 +92,9 @@ app.use('/api', routes);
 app.get('/health', async (req, res) => {
   try {
     const healthReport = await monitoringService.getHealthReport();
-    res.json({
-      status: 'OK',
-      timestamp: new Date().toISOString(),
+  res.json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
       version: '1.0.0',
       ...healthReport
     });
@@ -141,6 +141,6 @@ app.listen(PORT, () => {
   console.log(`🔗 API base: http://localhost:${PORT}/api`);
   console.log(`📈 Métricas: http://localhost:${PORT}/metrics`);
   console.log(`🌍 Ambiente: ${process.env.NODE_ENV || 'development'}`);
-});
+}); 
 
 module.exports = app; 

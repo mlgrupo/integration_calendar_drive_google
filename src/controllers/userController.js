@@ -162,7 +162,7 @@ const syncWorkspace = async (req, res) => {
     console.error('Erro ao sincronizar usuários:', error);
     res.status(500).json({
       erro: 'Erro ao sincronizar usuários',
-      detalhes: error.message
+      detalhes: error.message 
     });
   }
 };

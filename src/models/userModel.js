@@ -57,7 +57,7 @@ exports.getUserByEmail = async (email) => {
     console.error('Erro ao buscar usuário por email:', error);
     throw error;
   }
-};
+}; 
 
 // Buscar usuário pelo resourceId do canal do Drive
 exports.getUserByResourceId = async (resourceId) => {
