@@ -83,7 +83,8 @@ class MonitoringService {
         currentMemory: {
           rss: Math.round(currentMemory.rss / 1024 / 1024) + 'MB',
           heapUsed: Math.round(currentMemory.heapUsed / 1024 / 1024) + 'MB',
-          heapTotal: Math.round(currentMemory.heapTotal / 1024 / 1024) + 'MB'
+          heapTotal: Math.round(currentMemory.heapTotal / 1024 / 1024) + 'MB',
+          external: Math.round(currentMemory.external / 1024 / 1024) + 'MB'
         },
         memoryHistory: this.performance.memoryUsage.slice(-10)
       }
@@ -169,6 +170,17 @@ class MonitoringService {
       const stats = this.getStats();
       const timestamp = new Date();
       
+      // Função para converter string de memória para número
+      const parseMemoryValue = (value) => {
+        if (typeof value === 'number') return value;
+        if (typeof value === 'string') {
+          // Remove "MB" e converte para número
+          const numValue = parseFloat(value.replace('MB', ''));
+          return isNaN(numValue) ? 0 : numValue;
+        }
+        return 0;
+      };
+      
       // Salvar métricas individuais
       const metrics = [
         { type: 'requests', name: 'total', value: stats.metrics.requests },
@@ -176,10 +188,10 @@ class MonitoringService {
         { type: 'webhooks', name: 'total', value: stats.metrics.webhooks },
         { type: 'syncs', name: 'total', value: stats.metrics.syncs },
         { type: 'performance', name: 'avg_response_time', value: stats.performance.avgResponseTime },
-        { type: 'memory', name: 'heap_used', value: stats.performance.currentMemory.heapUsed },
-        { type: 'memory', name: 'heap_total', value: stats.performance.currentMemory.heapTotal },
-        { type: 'memory', name: 'external', value: stats.performance.currentMemory.external },
-        { type: 'memory', name: 'rss', value: stats.performance.currentMemory.rss }
+        { type: 'memory', name: 'heap_used_mb', value: parseMemoryValue(stats.performance.currentMemory.heapUsed) },
+        { type: 'memory', name: 'heap_total_mb', value: parseMemoryValue(stats.performance.currentMemory.heapTotal) },
+        { type: 'memory', name: 'rss_mb', value: parseMemoryValue(stats.performance.currentMemory.rss) },
+        { type: 'memory', name: 'external_mb', value: parseMemoryValue(stats.performance.currentMemory.external) }
       ];
 
       // Inserir cada métrica individualmente
@@ -193,7 +205,10 @@ class MonitoringService {
             metric.type,
             metric.name,
             metric.value,
-            JSON.stringify({ timestamp: timestamp.toISOString() })
+            JSON.stringify({ 
+              timestamp: timestamp.toISOString(),
+              original_value: stats.performance.currentMemory[metric.name.replace('_mb', '')] || metric.value
+            })
           ]
         );
       }
