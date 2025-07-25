@@ -14,6 +14,9 @@ const { initScheduledJobs } = require('./src/jobs/renewWebhooks');
 
 const app = express();
 
+// Configurar trust proxy para funcionar com reverse proxies (Railway, Heroku, etc.)
+app.set('trust proxy', 1);
+
 // Configurar handlers de erro não capturados
 process.on('unhandledRejection', unhandledRejectionHandler);
 process.on('uncaughtException', uncaughtExceptionHandler);
@@ -47,6 +50,15 @@ const limiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
+  // Configurar key generator para funcionar com proxy
+  keyGenerator: (req) => {
+    // Usar X-Forwarded-For se disponível, senão usar IP direto
+    return req.headers['x-forwarded-for']?.split(',')[0] || req.ip || req.connection.remoteAddress;
+  },
+  // Validar se o IP é válido
+  validate: {
+    xForwardedForHeader: false // Desabilitar validação que estava causando erro
+  }
 });
 
 app.use('/api', limiter);
