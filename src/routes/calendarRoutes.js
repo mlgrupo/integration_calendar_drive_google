@@ -44,4 +44,10 @@ router.post('/corrigir-horarios', calendarController.corrigirHorariosEventos);
 // Rota para criar tabelas de webhook
 router.post('/criar-tabelas-webhook', calendarController.criarTabelasWebhook);
 
+// Rota para verificar estrutura da tabela logs
+router.post('/verificar-estrutura-logs', calendarController.verificarEstruturaLogs);
+
+// Rota para testar sincronização de eventos passados
+router.post('/testar-eventos-passados', calendarController.testarEventosPassados);
+
 module.exports = router; 

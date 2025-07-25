@@ -527,7 +527,7 @@ const verificarWebhooksCalendar = async (req, res) => {
             id: 'test-check',
             type: 'web_hook',
             address: 'https://test.com/webhook',
-            expiration: Date.now() + (60 * 1000) // 1 minuto
+            expiration: Math.floor(Date.now() / 1000) + 60 // 60 segundos a partir de agora
           }
         });
         
@@ -553,14 +553,27 @@ const verificarWebhooksCalendar = async (req, res) => {
     // 4. Verificar logs de webhook recentes
     let logs = [];
     try {
+      // Primeiro verificar a estrutura da tabela logs
+      const { rows: logsStructure } = await pool.query(`
+        SELECT column_name, data_type 
+        FROM information_schema.columns 
+        WHERE table_schema = 'google' 
+        AND table_name = 'logs'
+        ORDER BY ordinal_position
+      `);
+      
+      console.log('📋 Estrutura da tabela logs:', logsStructure);
+      
+      // Buscar logs com a estrutura correta
       const { rows: logsData } = await pool.query(`
         SELECT 
           l.*,
           u.email as usuario_email
         FROM google.logs l
         LEFT JOIN google.usuarios u ON l.usuario_id = u.id
-        WHERE l.tipo_evento LIKE '%webhook%' 
-        OR l.tipo_evento LIKE '%calendar%'
+        WHERE l.mensagem LIKE '%webhook%' 
+        OR l.mensagem LIKE '%calendar%'
+        OR l.mensagem LIKE '%Calendar%'
         ORDER BY l.timestamp_evento DESC
         LIMIT 10
       `);
@@ -871,6 +884,235 @@ const criarTabelasWebhook = async (req, res) => {
   }
 };
 
+// Verificar e corrigir estrutura da tabela logs
+const verificarEstruturaLogs = async (req, res) => {
+  try {
+    console.log('🔍 Verificando estrutura da tabela logs...');
+    
+    const pool = require('../config/database');
+    
+    // 1. Verificar se a tabela logs existe
+    const { rows: logsExists } = await pool.query(`
+      SELECT EXISTS (
+        SELECT 1 FROM information_schema.tables 
+        WHERE table_schema = 'google' 
+        AND table_name = 'logs'
+      ) as exists
+    `);
+    
+    if (!logsExists[0].exists) {
+      console.log('📝 Tabela logs não existe, criando...');
+      await pool.query(`
+        CREATE TABLE google.logs (
+          id SERIAL PRIMARY KEY,
+          usuario_id INTEGER,
+          tipo_evento VARCHAR(100),
+          mensagem TEXT,
+          detalhes JSONB,
+          timestamp_evento TIMESTAMP DEFAULT NOW(),
+          nivel VARCHAR(20) DEFAULT 'info',
+          origem VARCHAR(100),
+          ip_address INET,
+          user_agent TEXT
+        )
+      `);
+      
+      // Criar índices
+      await pool.query('CREATE INDEX idx_logs_usuario_id ON google.logs(usuario_id)');
+      await pool.query('CREATE INDEX idx_logs_timestamp ON google.logs(timestamp_evento)');
+      await pool.query('CREATE INDEX idx_logs_tipo_evento ON google.logs(tipo_evento)');
+      await pool.query('CREATE INDEX idx_logs_nivel ON google.logs(nivel)');
+      
+      console.log('✅ Tabela logs criada!');
+    }
+    
+    // 2. Verificar estrutura atual
+    const { rows: estrutura } = await pool.query(`
+      SELECT column_name, data_type, is_nullable, column_default
+      FROM information_schema.columns 
+      WHERE table_schema = 'google' 
+      AND table_name = 'logs'
+      ORDER BY ordinal_position
+    `);
+    
+    console.log('📋 Estrutura atual da tabela logs:', estrutura);
+    
+    // 3. Verificar se precisa adicionar colunas
+    const colunasExistentes = estrutura.map(col => col.column_name);
+    const colunasNecessarias = [
+      'id', 'usuario_id', 'tipo_evento', 'mensagem', 'detalhes', 
+      'timestamp_evento', 'nivel', 'origem', 'ip_address', 'user_agent'
+    ];
+    
+    const colunasFaltando = colunasNecessarias.filter(col => !colunasExistentes.includes(col));
+    
+    if (colunasFaltando.length > 0) {
+      console.log('🔧 Adicionando colunas faltando:', colunasFaltando);
+      
+      for (const coluna of colunasFaltando) {
+        try {
+          switch (coluna) {
+            case 'tipo_evento':
+              await pool.query('ALTER TABLE google.logs ADD COLUMN tipo_evento VARCHAR(100)');
+              break;
+            case 'mensagem':
+              await pool.query('ALTER TABLE google.logs ADD COLUMN mensagem TEXT');
+              break;
+            case 'detalhes':
+              await pool.query('ALTER TABLE google.logs ADD COLUMN detalhes JSONB');
+              break;
+            case 'nivel':
+              await pool.query('ALTER TABLE google.logs ADD COLUMN nivel VARCHAR(20) DEFAULT \'info\'');
+              break;
+            case 'origem':
+              await pool.query('ALTER TABLE google.logs ADD COLUMN origem VARCHAR(100)');
+              break;
+            case 'ip_address':
+              await pool.query('ALTER TABLE google.logs ADD COLUMN ip_address INET');
+              break;
+            case 'user_agent':
+              await pool.query('ALTER TABLE google.logs ADD COLUMN user_agent TEXT');
+              break;
+          }
+          console.log(`✅ Coluna ${coluna} adicionada`);
+        } catch (error) {
+          console.warn(`⚠️ Erro ao adicionar coluna ${coluna}:`, error.message);
+        }
+      }
+    }
+    
+    // 4. Verificar alguns logs de exemplo
+    const { rows: logsExemplo } = await pool.query(`
+      SELECT * FROM google.logs 
+      ORDER BY timestamp_evento DESC 
+      LIMIT 5
+    `);
+    
+    res.json({
+      sucesso: true,
+      mensagem: 'Estrutura da tabela logs verificada/corrigida',
+      tabela_existe: logsExists[0].exists,
+      estrutura_atual: estrutura,
+      colunas_faltando: colunasFaltando,
+      logs_exemplo: logsExemplo
+    });
+    
+  } catch (error) {
+    console.error('Erro ao verificar estrutura dos logs:', error);
+    res.status(500).json({ 
+      erro: 'Falha ao verificar estrutura dos logs', 
+      detalhes: error.message 
+    });
+  }
+};
+
+// Testar sincronização de eventos passados
+const testarEventosPassados = async (req, res) => {
+  try {
+    const { email } = req.body;
+    
+    if (!email) {
+      return res.status(400).json({ 
+        erro: 'Email é obrigatório',
+        exemplo: { email: 'usuario@reconectaoficial.com.br' }
+      });
+    }
+
+    console.log(`🧪 Testando sincronização de eventos passados para: ${email}`);
+    
+    // Responder imediatamente
+    res.status(202).json({
+      sucesso: true,
+      mensagem: 'Teste de eventos passados iniciado em background',
+      email: email,
+      timestamp: new Date().toISOString()
+    });
+
+    // Executar em background
+    setImmediate(async () => {
+      try {
+        const { getCalendarClient } = require('../config/googleJWT');
+        const calendar = await getCalendarClient(email);
+        
+        // Buscar eventos dos últimos 30 dias (incluindo passados)
+        const now = new Date();
+        const timeMin = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000)); // Últimos 30 dias
+        const timeMax = new Date(now.getTime() + (7 * 24 * 60 * 60 * 1000)); // Próximos 7 dias
+
+        console.log(`🔍 Buscando eventos de ${timeMin.toISOString()} até ${timeMax.toISOString()}`);
+        
+        const eventsResponse = await calendar.events.list({
+          calendarId: 'primary',
+          timeMin: timeMin.toISOString(),
+          timeMax: timeMax.toISOString(),
+          maxResults: 1000,
+          singleEvents: true,
+          orderBy: 'startTime'
+        });
+
+        if (!eventsResponse.data.items) {
+          console.log('❌ Nenhum evento encontrado');
+          return;
+        }
+
+        const eventos = eventsResponse.data.items;
+        console.log(`📅 Encontrados ${eventos.length} eventos`);
+
+        // Separar eventos passados e futuros
+        const agora = new Date();
+        const eventosPassados = eventos.filter(evento => {
+          const dataInicio = evento.start?.dateTime ? new Date(evento.start.dateTime) : null;
+          return dataInicio && dataInicio < agora;
+        });
+
+        const eventosFuturos = eventos.filter(evento => {
+          const dataInicio = evento.start?.dateTime ? new Date(evento.start.dateTime) : null;
+          return dataInicio && dataInicio >= agora;
+        });
+
+        console.log(`📊 Eventos passados: ${eventosPassados.length}`);
+        console.log(`📊 Eventos futuros: ${eventosFuturos.length}`);
+
+        // Processar eventos passados
+        let processadosPassados = 0;
+        for (const evento of eventosPassados) {
+          try {
+            console.log(`📋 Processando evento passado: ${evento.summary || evento.id} (${evento.start?.dateTime})`);
+            await calendarServiceJWT.processarEventoCalendarJWT(evento, email, 'primary');
+            processadosPassados++;
+          } catch (error) {
+            console.error(`❌ Erro ao processar evento passado ${evento.id}:`, error.message);
+          }
+        }
+
+        // Processar eventos futuros
+        let processadosFuturos = 0;
+        for (const evento of eventosFuturos) {
+          try {
+            console.log(`📋 Processando evento futuro: ${evento.summary || evento.id} (${evento.start?.dateTime})`);
+            await calendarServiceJWT.processarEventoCalendarJWT(evento, email, 'primary');
+            processadosFuturos++;
+          } catch (error) {
+            console.error(`❌ Erro ao processar evento futuro ${evento.id}:`, error.message);
+          }
+        }
+
+        console.log(`✅ Teste concluído:`);
+        console.log(`   📅 Eventos passados processados: ${processadosPassados}`);
+        console.log(`   📅 Eventos futuros processados: ${processadosFuturos}`);
+        console.log(`   📅 Total processado: ${processadosPassados + processadosFuturos}`);
+
+      } catch (error) {
+        console.error(`❌ Erro no teste de eventos passados para ${email}:`, error.message);
+      }
+    });
+
+  } catch (error) {
+    console.error('Erro ao iniciar teste:', error);
+    // Não re-throw pois já respondemos 202
+  }
+};
+
 module.exports = {
   syncCalendar,
   syncCalendarPorUsuario,
@@ -884,5 +1126,7 @@ module.exports = {
   verificarWebhooksCalendar,
   forcarConfiguracaoWebhooks,
   corrigirHorariosEventos,
-  criarTabelasWebhook
+  criarTabelasWebhook,
+  verificarEstruturaLogs,
+  testarEventosPassados
 }; 
