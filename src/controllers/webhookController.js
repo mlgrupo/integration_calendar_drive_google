@@ -7,7 +7,7 @@ const pool = require('../config/database');
 
 // Cache para evitar processamento duplicado de webhooks
 const webhookCache = new Map();
-const WEBHOOK_CACHE_TTL = 30000; // 30 segundos
+const WEBHOOK_CACHE_TTL = 300000; // 5 minutos (aumentado drasticamente)
 
 // Função para verificar se webhook já foi processado recentemente
 const isWebhookProcessed = (resourceId, channelId) => {
@@ -15,10 +15,15 @@ const isWebhookProcessed = (resourceId, channelId) => {
   const now = Date.now();
   const cached = webhookCache.get(key);
   
+  console.log(`🔍 Verificando cache para: ${key}`);
+  console.log(`   Cache atual:`, cached ? `existe (${now - cached.timestamp}ms atrás)` : 'não existe');
+  
   if (cached && (now - cached.timestamp) < WEBHOOK_CACHE_TTL) {
+    console.log(`   ⚠️ Webhook já processado há ${Math.round((now - cached.timestamp)/1000)}s, ignorando...`);
     return true;
   }
   
+  console.log(`   ✅ Processando webhook (novo ou expirado)`);
   webhookCache.set(key, { timestamp: now });
   return false;
 };
@@ -48,6 +53,12 @@ exports.driveWebhook = async (req, res) => {
     const resourceState = req.headers['x-goog-resource-state'];
     const messageNumber = req.headers['x-goog-message-number'];
     const pageTokenHeader = req.headers['x-goog-resource-uri']?.split('pageToken=')[1]?.replace(/[^0-9]/g, '');
+
+    // Ignorar webhooks de sincronização (muito frequentes e desnecessários)
+    if (resourceState === 'sync') {
+      console.log('⚠️ Ignorando webhook de sincronização (resourceState: sync)');
+      return res.status(200).json({ sucesso: true, processado: false, motivo: 'sync_ignorado' });
+    }
 
     // Verificar se já foi processado recentemente
     if (isWebhookProcessed(resourceId, channelId)) {
@@ -127,6 +138,12 @@ exports.calendarWebhook = async (req, res) => {
     const channelId = req.headers['x-goog-channel-id'];
     const resourceState = req.headers['x-goog-resource-state'];
     const messageNumber = req.headers['x-goog-message-number'];
+
+    // Ignorar webhooks de sincronização (muito frequentes e desnecessários)
+    if (resourceState === 'sync') {
+      console.log('⚠️ Ignorando webhook de sincronização do Calendar (resourceState: sync)');
+      return res.status(200).json({ sucesso: true, processado: false, motivo: 'sync_ignorado' });
+    }
 
     // Verificar se já foi processado recentemente
     if (isWebhookProcessed(resourceId, channelId)) {
