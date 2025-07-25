@@ -18,7 +18,7 @@ exports.getEventById = async (eventId, usuarioId) => {
 exports.upsertEvent = async (eventData) => {
   try {
     const {
-      usuario_id, event_id, iCalUID, titulo, descricao, localizacao, data_inicio, data_fim,
+      usuario_id, event_id, icaluid, titulo, descricao, localizacao, data_inicio, data_fim,
       duracao_minutos, recorrente, recorrencia, calendario_id, calendario_nome,
       status, visibilidade, transparencia, convidados, organizador_email,
       organizador_nome, criado_em, modificado_em, dados_completos
@@ -26,12 +26,13 @@ exports.upsertEvent = async (eventData) => {
 
     const result = await pool.query(
       `INSERT INTO google.calendar_events
-        (usuario_id, event_id, iCalUID, titulo, descricao, localizacao, data_inicio, data_fim,
+        (usuario_id, event_id, icaluid, titulo, descricao, localizacao, data_inicio, data_fim,
          duracao_minutos, recorrente, recorrencia, calendario_id, calendario_nome,
          status, visibilidade, transparencia, convidados, organizador_email,
          organizador_nome, criado_em, modificado_em, dados_completos)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
        ON CONFLICT (event_id, usuario_id) DO UPDATE SET
+         icaluid = EXCLUDED.icaluid,
          titulo = EXCLUDED.titulo,
          descricao = EXCLUDED.descricao,
          localizacao = EXCLUDED.localizacao,
@@ -50,10 +51,11 @@ exports.upsertEvent = async (eventData) => {
          organizador_nome = EXCLUDED.organizador_nome,
          criado_em = EXCLUDED.criado_em,
          modificado_em = EXCLUDED.modificado_em,
-         dados_completos = EXCLUDED.dados_completos
+         dados_completos = EXCLUDED.dados_completos,
+         updated_at = NOW()
        RETURNING *`,
       [
-        usuario_id, event_id, iCalUID, titulo, descricao, localizacao, data_inicio, data_fim,
+        usuario_id, event_id, icaluid, titulo, descricao, localizacao, data_inicio, data_fim,
         duracao_minutos, recorrente, recorrencia, calendario_id, calendario_nome,
         status, visibilidade, transparencia, convidados, organizador_email,
         organizador_nome, criado_em, modificado_em, dados_completos
