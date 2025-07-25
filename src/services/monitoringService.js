@@ -167,19 +167,38 @@ class MonitoringService {
   async saveMetrics() {
     try {
       const stats = this.getStats();
-      await pool.query(
-        `INSERT INTO google.system_metrics 
-         (requests, errors, webhooks, syncs, avg_response_time, memory_usage, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-        [
-          stats.metrics.requests,
-          stats.metrics.errors,
-          stats.metrics.webhooks,
-          stats.metrics.syncs,
-          stats.performance.avgResponseTime,
-          JSON.stringify(stats.performance.currentMemory)
-        ]
-      );
+      const timestamp = new Date();
+      
+      // Salvar métricas individuais
+      const metrics = [
+        { type: 'requests', name: 'total', value: stats.metrics.requests },
+        { type: 'errors', name: 'total', value: stats.metrics.errors },
+        { type: 'webhooks', name: 'total', value: stats.metrics.webhooks },
+        { type: 'syncs', name: 'total', value: stats.metrics.syncs },
+        { type: 'performance', name: 'avg_response_time', value: stats.performance.avgResponseTime },
+        { type: 'memory', name: 'heap_used', value: stats.performance.currentMemory.heapUsed },
+        { type: 'memory', name: 'heap_total', value: stats.performance.currentMemory.heapTotal },
+        { type: 'memory', name: 'external', value: stats.performance.currentMemory.external },
+        { type: 'memory', name: 'rss', value: stats.performance.currentMemory.rss }
+      ];
+
+      // Inserir cada métrica individualmente
+      for (const metric of metrics) {
+        await pool.query(
+          `INSERT INTO google.system_metrics 
+           (timestamp, metric_type, metric_name, metric_value, metric_data)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [
+            timestamp,
+            metric.type,
+            metric.name,
+            metric.value,
+            JSON.stringify({ timestamp: timestamp.toISOString() })
+          ]
+        );
+      }
+
+      console.log(`✅ Métricas salvas: ${metrics.length} registros`);
     } catch (error) {
       console.error('Erro ao salvar métricas:', error);
     }
