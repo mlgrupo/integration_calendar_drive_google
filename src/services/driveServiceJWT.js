@@ -304,3 +304,90 @@ exports.registrarWebhookDriveJWT = async (email, webhookUrl) => {
     throw error;
   }
 }; 
+
+// Processar arquivo individual do Drive via webhook
+exports.processarArquivoDriveJWT = async (arquivo, userEmail) => {
+  try {
+    // Buscar usuário pelo email
+    const usuario = await userModel.getUserByEmail(userEmail);
+    if (!usuario) {
+      console.warn(`Usuário não encontrado: ${userEmail}`);
+      return;
+    }
+
+    const isFolder = arquivo.mimeType === 'application/vnd.google-apps.folder';
+
+    if (isFolder) {
+      // Salvar/atualizar pasta
+      await driveFolderModel.upsertFolder({
+        usuario_id: usuario.id,
+        folder_id: arquivo.id,
+        nome: arquivo.name,
+        caminho_completo: null,
+        parent_folder_id: arquivo.parents ? arquivo.parents[0] : null,
+        cor_rgb: null,
+        compartilhado: arquivo.shared || false,
+        visibilidade: null,
+        permissoes: null,
+        criado_em: arquivo.createdTime ? new Date(arquivo.createdTime) : null,
+        modificado_em: arquivo.modifiedTime ? new Date(arquivo.modifiedTime) : null,
+        ultimo_acesso: null,
+        tamanho_total: 0,
+        quantidade_arquivos: 0,
+        quantidade_subpastas: 0,
+        dados_completos: arquivo
+      });
+      console.log(`✅ Pasta processada: ${arquivo.name}`);
+    } else {
+      // Salvar/atualizar arquivo
+      await driveFileModel.upsertFile({
+        usuario_id: usuario.id,
+        file_id: arquivo.id,
+        nome: arquivo.name,
+        mime_type: arquivo.mimeType,
+        tamanho: arquivo.size || null,
+        folder_id: arquivo.parents ? arquivo.parents[0] : null,
+        caminho_completo: null,
+        dono_email: arquivo.owners && arquivo.owners[0] ? arquivo.owners[0].emailAddress : null,
+        compartilhado: arquivo.shared || false,
+        visibilidade: null,
+        permissoes: null,
+        criado_em: arquivo.createdTime ? new Date(arquivo.createdTime) : null,
+        modificado_em: arquivo.modifiedTime ? new Date(arquivo.modifiedTime) : null,
+        versao: arquivo.version ? parseInt(arquivo.version) : 1,
+        md5_checksum: arquivo.md5Checksum || null,
+        web_view_link: arquivo.webViewLink || null,
+        download_link: arquivo.exportLinks ? JSON.stringify(arquivo.exportLinks) : null,
+        thumbnail_link: arquivo.thumbnailLink || null,
+        starred: arquivo.starred || false,
+        trashed: arquivo.trashed || false,
+        tipo_arquivo: arquivo.mimeType ? arquivo.mimeType.split('.').pop() : null,
+        extensao: arquivo.name && arquivo.name.includes('.') ? arquivo.name.split('.').pop() : null,
+        dados_completos: arquivo
+      });
+      console.log(`✅ Arquivo processado: ${arquivo.name}`);
+    }
+  } catch (error) {
+    console.error('Erro ao processar arquivo do Drive:', error.message);
+    throw error;
+  }
+};
+
+// Marcar arquivo como deletado no banco
+exports.marcarArquivoComoDeletado = async (fileId, userEmail) => {
+  try {
+    // Buscar usuário pelo email
+    const usuario = await userModel.getUserByEmail(userEmail);
+    if (!usuario) {
+      console.warn(`Usuário não encontrado: ${userEmail}`);
+      return;
+    }
+
+    // Marcar arquivo como deletado
+    await driveFileModel.marcarComoDeletado(fileId, usuario.id);
+    console.log(`🗑️ Arquivo marcado como deletado: ${fileId}`);
+  } catch (error) {
+    console.error('Erro ao marcar arquivo como deletado:', error.message);
+    throw error;
+  }
+}; 

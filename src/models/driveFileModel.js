@@ -97,3 +97,28 @@ exports.countFilesByUser = async (usuarioId) => {
     throw error;
   }
 }; 
+
+// Marcar arquivo como deletado
+exports.marcarComoDeletado = async (fileId, usuarioId) => {
+  try {
+    const result = await pool.query(
+      `UPDATE google.drive_files 
+       SET trashed = true, 
+           modificado_em = NOW() 
+       WHERE file_id = $1 AND usuario_id = $2
+       RETURNING *`,
+      [fileId, usuarioId]
+    );
+    
+    if (result.rows.length > 0) {
+      console.log(`Arquivo marcado como deletado: ${fileId}`);
+      return result.rows[0];
+    } else {
+      console.warn(`Arquivo não encontrado para marcar como deletado: ${fileId}`);
+      return null;
+    }
+  } catch (error) {
+    console.error('Erro ao marcar arquivo como deletado:', error);
+    throw error;
+  }
+}; 
