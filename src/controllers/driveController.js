@@ -360,9 +360,90 @@ const webhookDrive = async (req, res) => {
   }
 }; 
 
+// Forçar sincronização manual do Drive
+const forcarSincronizacaoDrive = async (req, res) => {
+  try {
+    const { email } = req.body;
+    
+    if (!email) {
+      return res.status(400).json({
+        sucesso: false,
+        erro: 'Email do usuário é obrigatório'
+      });
+    }
+
+    console.log(`🔄 Forçando sincronização manual do Drive para: ${email}`);
+
+    // Responder imediatamente
+    res.status(202).json({
+      sucesso: true,
+      mensagem: 'Sincronização do Drive iniciada em background',
+      usuario: email,
+      timestamp: new Date().toISOString()
+    });
+
+    // Executar em background
+    setImmediate(async () => {
+      try {
+        const userModel = require('../models/userModel');
+        const driveServiceJWT = require('../services/driveServiceJWT');
+
+        const { getDriveClient } = require('../config/googleJWT');
+        const drive = await getDriveClient(email);
+
+        // Obter novo startPageToken
+        const startPageTokenResponse = await drive.changes.getStartPageToken();
+        const newStartPageToken = startPageTokenResponse.data.startPageToken;
+        console.log(`📄 Novo startPageToken para ${email}: ${newStartPageToken}`);
+
+        // Salvar o novo pageToken
+        await userModel.saveDrivePageToken(email, newStartPageToken);
+
+        // Buscar arquivos modificados recentemente (últimas 24 horas)
+        const now = new Date();
+        const timeMin = new Date(now.getTime() - (24 * 60 * 60 * 1000));
+
+        console.log(`🔍 Buscando arquivos modificados para ${email}...`);
+        const files = await drive.files.list({
+          q: `modifiedTime > '${timeMin.toISOString()}'`,
+          fields: 'files(id,name,mimeType,parents,size,modifiedTime,createdTime,trashed,webViewLink)',
+          orderBy: 'modifiedTime desc'
+        });
+
+        if (files.data.files && files.data.files.length > 0) {
+          console.log(`📁 Encontrados ${files.data.files.length} arquivos para ${email}`);
+
+          let arquivosProcessados = 0;
+          for (const file of files.data.files) {
+            try {
+              console.log(`  📋 Processando: ${file.name} (${file.id})`);
+              await driveServiceJWT.processarArquivoDriveJWT(file, email);
+              arquivosProcessados++;
+            } catch (error) {
+              console.error(`Erro ao processar ${file.name}:`, error.message);
+            }
+          }
+
+          console.log(`✅ Sincronização manual concluída para ${email}: ${arquivosProcessados} arquivos`);
+        } else {
+          console.log(`ℹ️ Nenhum arquivo modificado encontrado para ${email}`);
+        }
+
+      } catch (error) {
+        console.error(`❌ Erro na sincronização manual para ${email}:`, error.message);
+      }
+    });
+
+  } catch (error) {
+    console.error('Erro ao iniciar sincronização manual:', error);
+    // Não re-throw pois já respondemos 202
+  }
+};
+
 module.exports = {
   syncDrive,
   syncDrivePorUsuario,
   webhookDrive,
-  configurarWebhookDrive
+  configurarWebhookDrive,
+  forcarSincronizacaoDrive
 }; 

@@ -14,4 +14,7 @@ router.post('/sync/:email', driveController.syncDrivePorUsuario);
 // Webhook do Drive
 router.post('/webhook', driveController.webhookDrive);
 
+// Rota para forçar sincronização manual do Drive
+router.post('/forcar-sincronizacao', driveController.forcarSincronizacaoDrive);
+
 module.exports = router; 

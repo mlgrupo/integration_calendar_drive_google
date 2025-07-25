@@ -23,4 +23,10 @@ router.post('/configurar/:email', webhookController.configurarWebhookUsuario);
 // Configurar webhooks para TODOS os usuários automaticamente
 router.post('/configurar-todos', webhookController.configurarWebhooksTodos);
 
+// Rota para diagnosticar Drive
+router.post('/diagnosticar-drive', webhookController.diagnosticarDrive);
+
+// Rota para forçar sincronização do Drive
+router.post('/forcar-sync-drive', webhookController.forcarSyncDrive);
+
 module.exports = router; 
