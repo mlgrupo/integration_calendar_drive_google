@@ -34,7 +34,7 @@ exports.syncCalendarEventsJWT = async () => {
               (evento.description && evento.description.toLowerCase().includes('zoom'));
             await calendarEventModel.upsertEvent({
               usuario_id: usuario.id,
-              event_id: evento.id,
+              event_id: cleanId(evento.id),
               titulo: evento.summary || (isReuniao ? 'Reunião sem título' : 'Evento sem título'),
               descricao: evento.description || null,
               localizacao: evento.location || null,
@@ -121,8 +121,8 @@ exports.processarEventoCalendarJWT = async (evento, userEmail, calendarId) => {
     // Salvar/atualizar evento no banco
     await calendarEventModel.upsertEvent({
       usuario_id: usuario.id,
-      event_id: evento.id,
-      icaluid: evento.iCalUID || null,
+      event_id: cleanId(evento.id),
+      icaluid: cleanId(evento.iCalUID) || null,
       titulo: evento.summary || (isReuniao ? 'Reunião sem título' : 'Evento sem título'),
       descricao: evento.description || null,
       localizacao: evento.location || null,
@@ -151,3 +151,8 @@ exports.processarEventoCalendarJWT = async (evento, userEmail, calendarId) => {
     throw error;
   }
 }; 
+
+// Sempre garantir que event_id e icaluid não tenham timestamp
+function cleanId(id) {
+  return typeof id === 'string' ? id.split('_')[0] : id;
+} 

@@ -5,6 +5,11 @@ const driveFolderModel = require('../models/driveFolderModel');
 // const logModel = require('../models/logModel'); // Comentado temporariamente
 const { v4: uuidv4 } = require('uuid');
 
+// Sempre garantir que file_id e folder_id não tenham timestamp
+function cleanId(id) {
+  return typeof id === 'string' ? id.split('_')[0] : id;
+}
+
 // Sincronizar arquivos e pastas do Drive para todos os usuários usando JWT
 exports.syncDriveFilesJWT = async () => {
   try {
@@ -16,42 +21,30 @@ exports.syncDriveFilesJWT = async () => {
 
     for (const usuario of usuarios) {
       console.log(`\n=== Processando usuário: ${usuario.email} ===`);
-      
       try {
         // Usar a nova abordagem JWT
         const drive = await getDriveClient(usuario.email);
 
-        // Buscar todos os arquivos
-        console.log('Buscando arquivos com JWT...');
-        const response = await drive.files.list({
+        // 1. Buscar arquivos do Meu Drive
+        console.log('Buscando arquivos do Meu Drive...');
+        const myDriveResponse = await drive.files.list({
           pageSize: 1000,
-          fields: 'nextPageToken, files(id, name, mimeType, size, modifiedTime, createdTime, webViewLink, parents, owners, shared, starred, trashed, version, md5Checksum, exportLinks, thumbnailLink)'
+          fields: 'nextPageToken, files(id, name, mimeType, size, modifiedTime, createdTime, webViewLink, parents, owners, shared, starred, trashed, version, md5Checksum, exportLinks, thumbnailLink)',
+          q: 'trashed = false',
+          corpora: 'user',
+          includeItemsFromAllDrives: true,
+          supportsAllDrives: true
         });
-
-        const allFiles = response.data.files || [];
-
-        // Mostrar alguns exemplos dos arquivos encontrados
-        if (allFiles.length > 0) {
-          console.log(`Arquivos encontrados: ${allFiles.length}`);
-          console.log('Primeiros 5 arquivos:');
-          allFiles.slice(0, 5).forEach((file, index) => {
-            console.log(`${index + 1}. ${file.name} (${file.mimeType}) - Owner: ${file.owners?.[0]?.emailAddress || 'N/A'} - Shared: ${file.shared || false}`);
-          });
-        }
-
-        // Processar arquivos encontrados
-        for (const arquivo of allFiles) {
+        const myDriveFiles = myDriveResponse.data.files || [];
+        for (const arquivo of myDriveFiles) {
           const isFolder = arquivo.mimeType === 'application/vnd.google-apps.folder';
-          console.log(`Processando: ${arquivo.name} (${isFolder ? 'pasta' : 'arquivo'})`);
-
           if (isFolder) {
-            // Salvar/atualizar pasta
             await driveFolderModel.upsertFolder({
               usuario_id: usuario.id,
-              folder_id: arquivo.id,
+              folder_id: cleanId(arquivo.id),
               nome: arquivo.name,
-              caminho_completo: null, // Pode ser montado depois
-              parent_folder_id: arquivo.parents ? arquivo.parents[0] : null,
+              caminho_completo: null,
+              parent_folder_id: arquivo.parents ? cleanId(arquivo.parents[0]) : null,
               cor_rgb: null,
               compartilhado: arquivo.shared || false,
               visibilidade: null,
@@ -62,19 +55,20 @@ exports.syncDriveFilesJWT = async () => {
               tamanho_total: 0,
               quantidade_arquivos: 0,
               quantidade_subpastas: 0,
-              dados_completos: arquivo
+              dados_completos: arquivo,
+              origem_drive: 'myDrive',
+              nome_drive: null
             });
             totalPastas++;
           } else {
-            // Salvar/atualizar arquivo
             await driveFileModel.upsertFile({
               usuario_id: usuario.id,
-              file_id: arquivo.id,
+              file_id: cleanId(arquivo.id),
               nome: arquivo.name,
               mime_type: arquivo.mimeType,
               tamanho: arquivo.size || null,
-              folder_id: arquivo.parents ? arquivo.parents[0] : null,
-              caminho_completo: null, // Pode ser montado depois
+              folder_id: arquivo.parents ? cleanId(arquivo.parents[0]) : null,
+              caminho_completo: null,
               dono_email: arquivo.owners && arquivo.owners[0] ? arquivo.owners[0].emailAddress : null,
               compartilhado: arquivo.shared || false,
               visibilidade: null,
@@ -90,30 +84,88 @@ exports.syncDriveFilesJWT = async () => {
               trashed: arquivo.trashed || false,
               tipo_arquivo: arquivo.mimeType ? arquivo.mimeType.split('.').pop() : null,
               extensao: arquivo.name && arquivo.name.includes('.') ? arquivo.name.split('.').pop() : null,
-              dados_completos: arquivo
+              dados_completos: arquivo,
+              origem_drive: 'myDrive',
+              nome_drive: null
             });
             totalArquivos++;
           }
+        }
 
-          // Registrar log de evento do Drive (comentado temporariamente)
-          /*
-          await logModel.logDriveEvent({
-            usuario_id: usuario.id,
-            tipo_evento: 'sync_jwt',
-            recurso_tipo: isFolder ? 'folder' : 'file',
-            recurso_id: arquivo.id,
-            detalhes: `Sincronização de ${isFolder ? 'pasta' : 'arquivo'} via JWT`,
-            dados_anteriores: null,
-            dados_novos: arquivo,
-            ip_origem: null,
-            user_agent: null,
-            timestamp_evento: new Date()
+        // 2. Buscar todos os Shared Drives
+        console.log('Buscando Shared Drives...');
+        const drivesResponse = await drive.drives.list();
+        const sharedDrives = drivesResponse.data.drives || [];
+        for (const sharedDrive of sharedDrives) {
+          console.log(`Buscando arquivos do Shared Drive: ${sharedDrive.name}`);
+          const sharedDriveResponse = await drive.files.list({
+            pageSize: 1000,
+            fields: 'nextPageToken, files(id, name, mimeType, size, modifiedTime, createdTime, webViewLink, parents, owners, shared, starred, trashed, version, md5Checksum, exportLinks, thumbnailLink)',
+            q: 'trashed = false',
+            corpora: 'drive',
+            driveId: sharedDrive.id,
+            includeItemsFromAllDrives: true,
+            supportsAllDrives: true
           });
-          */
+          const sharedDriveFiles = sharedDriveResponse.data.files || [];
+          for (const arquivo of sharedDriveFiles) {
+            const isFolder = arquivo.mimeType === 'application/vnd.google-apps.folder';
+            if (isFolder) {
+              await driveFolderModel.upsertFolder({
+                usuario_id: usuario.id,
+                folder_id: cleanId(arquivo.id),
+                nome: arquivo.name,
+                caminho_completo: null,
+                parent_folder_id: arquivo.parents ? cleanId(arquivo.parents[0]) : null,
+                cor_rgb: null,
+                compartilhado: arquivo.shared || false,
+                visibilidade: null,
+                permissoes: null,
+                criado_em: arquivo.createdTime ? new Date(arquivo.createdTime) : null,
+                modificado_em: arquivo.modifiedTime ? new Date(arquivo.modifiedTime) : null,
+                ultimo_acesso: null,
+                tamanho_total: 0,
+                quantidade_arquivos: 0,
+                quantidade_subpastas: 0,
+                dados_completos: arquivo,
+                origem_drive: sharedDrive.id,
+                nome_drive: sharedDrive.name
+              });
+              totalPastas++;
+            } else {
+              await driveFileModel.upsertFile({
+                usuario_id: usuario.id,
+                file_id: cleanId(arquivo.id),
+                nome: arquivo.name,
+                mime_type: arquivo.mimeType,
+                tamanho: arquivo.size || null,
+                folder_id: arquivo.parents ? cleanId(arquivo.parents[0]) : null,
+                caminho_completo: null,
+                dono_email: arquivo.owners && arquivo.owners[0] ? arquivo.owners[0].emailAddress : null,
+                compartilhado: arquivo.shared || false,
+                visibilidade: null,
+                permissoes: null,
+                criado_em: arquivo.createdTime ? new Date(arquivo.createdTime) : null,
+                modificado_em: arquivo.modifiedTime ? new Date(arquivo.modifiedTime) : null,
+                versao: arquivo.version ? parseInt(arquivo.version) : 1,
+                md5_checksum: arquivo.md5Checksum || null,
+                web_view_link: arquivo.webViewLink || null,
+                download_link: arquivo.exportLinks ? JSON.stringify(arquivo.exportLinks) : null,
+                thumbnail_link: arquivo.thumbnailLink || null,
+                starred: arquivo.starred || false,
+                trashed: arquivo.trashed || false,
+                tipo_arquivo: arquivo.mimeType ? arquivo.mimeType.split('.').pop() : null,
+                extensao: arquivo.name && arquivo.name.includes('.') ? arquivo.name.split('.').pop() : null,
+                dados_completos: arquivo,
+                origem_drive: sharedDrive.id,
+                nome_drive: sharedDrive.name
+              });
+              totalArquivos++;
+            }
+          }
         }
 
         console.log(`Usuário ${usuario.email}: ${totalArquivos} arquivos, ${totalPastas} pastas processados`);
-        
       } catch (userError) {
         console.error(`Erro ao processar usuário ${usuario.email}:`, userError.message);
         // Continuar com o próximo usuário
@@ -155,10 +207,10 @@ exports.processarMudancaDriveJWT = async (fileId, userEmail) => {
       // Atualizar pasta
       await driveFolderModel.upsertFolder({
         usuario_id: usuario.id,
-        folder_id: arquivo.id,
+        folder_id: cleanId(arquivo.id),
         nome: arquivo.name,
         caminho_completo: null,
-        parent_folder_id: arquivo.parents ? arquivo.parents[0] : null,
+        parent_folder_id: arquivo.parents ? cleanId(arquivo.parents[0]) : null,
         cor_rgb: null,
         compartilhado: arquivo.shared || false,
         visibilidade: null,
@@ -175,11 +227,11 @@ exports.processarMudancaDriveJWT = async (fileId, userEmail) => {
       // Atualizar arquivo
       await driveFileModel.upsertFile({
         usuario_id: usuario.id,
-        file_id: arquivo.id,
+        file_id: cleanId(arquivo.id),
         nome: arquivo.name,
         mime_type: arquivo.mimeType,
         tamanho: arquivo.size || null,
-        folder_id: arquivo.parents ? arquivo.parents[0] : null,
+        folder_id: arquivo.parents ? cleanId(arquivo.parents[0]) : null,
         caminho_completo: null,
         dono_email: arquivo.owners && arquivo.owners[0] ? arquivo.owners[0].emailAddress : null,
         compartilhado: arquivo.shared || false,
@@ -321,10 +373,10 @@ exports.processarArquivoDriveJWT = async (arquivo, userEmail) => {
       // Salvar/atualizar pasta
       await driveFolderModel.upsertFolder({
         usuario_id: usuario.id,
-        folder_id: arquivo.id,
+        folder_id: cleanId(arquivo.id),
         nome: arquivo.name,
         caminho_completo: null,
-        parent_folder_id: arquivo.parents ? arquivo.parents[0] : null,
+        parent_folder_id: arquivo.parents ? cleanId(arquivo.parents[0]) : null,
         cor_rgb: null,
         compartilhado: arquivo.shared || false,
         visibilidade: null,
@@ -342,11 +394,11 @@ exports.processarArquivoDriveJWT = async (arquivo, userEmail) => {
       // Salvar/atualizar arquivo
       await driveFileModel.upsertFile({
         usuario_id: usuario.id,
-        file_id: arquivo.id,
+        file_id: cleanId(arquivo.id),
         nome: arquivo.name,
         mime_type: arquivo.mimeType,
         tamanho: arquivo.size || null,
-        folder_id: arquivo.parents ? arquivo.parents[0] : null,
+        folder_id: arquivo.parents ? cleanId(arquivo.parents[0]) : null,
         caminho_completo: null,
         dono_email: arquivo.owners && arquivo.owners[0] ? arquivo.owners[0].emailAddress : null,
         compartilhado: arquivo.shared || false,
