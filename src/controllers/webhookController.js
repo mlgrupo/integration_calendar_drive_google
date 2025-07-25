@@ -5,6 +5,34 @@ const userModel = require('../models/userModel');
 const calendarServiceJWT = require('../services/calendarServiceJWT');
 const pool = require('../config/database');
 
+// Cache para evitar processamento duplicado de webhooks
+const webhookCache = new Map();
+const WEBHOOK_CACHE_TTL = 30000; // 30 segundos
+
+// Função para verificar se webhook já foi processado recentemente
+const isWebhookProcessed = (resourceId, channelId) => {
+  const key = `${resourceId}-${channelId}`;
+  const now = Date.now();
+  const cached = webhookCache.get(key);
+  
+  if (cached && (now - cached.timestamp) < WEBHOOK_CACHE_TTL) {
+    return true;
+  }
+  
+  webhookCache.set(key, { timestamp: now });
+  return false;
+};
+
+// Limpar cache antigo periodicamente
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, value] of webhookCache.entries()) {
+    if (now - value.timestamp > WEBHOOK_CACHE_TTL) {
+      webhookCache.delete(key);
+    }
+  }
+}, 60000); // Limpar a cada minuto
+
 // Webhook do Drive (AGORA USA JWT)
 exports.driveWebhook = async (req, res) => {
   try {
@@ -20,6 +48,12 @@ exports.driveWebhook = async (req, res) => {
     const resourceState = req.headers['x-goog-resource-state'];
     const messageNumber = req.headers['x-goog-message-number'];
     const pageTokenHeader = req.headers['x-goog-resource-uri']?.split('pageToken=')[1]?.replace(/[^0-9]/g, '');
+
+    // Verificar se já foi processado recentemente
+    if (isWebhookProcessed(resourceId, channelId)) {
+      console.log('⚠️ Webhook do Drive já processado recentemente, ignorando...');
+      return res.status(200).json({ sucesso: true, processado: false, motivo: 'já_processado' });
+    }
 
     // Aqui você precisa mapear resourceId/channelId para o usuário correto
     // Exemplo: buscar no banco qual usuário está associado a esse canal/resourceId
@@ -94,6 +128,12 @@ exports.calendarWebhook = async (req, res) => {
     const resourceState = req.headers['x-goog-resource-state'];
     const messageNumber = req.headers['x-goog-message-number'];
 
+    // Verificar se já foi processado recentemente
+    if (isWebhookProcessed(resourceId, channelId)) {
+      console.log('⚠️ Webhook do Calendar já processado recentemente, ignorando...');
+      return res.status(200).json({ sucesso: true, processado: false, motivo: 'já_processado' });
+    }
+
     // Buscar usuário pelo resourceId do canal
     let userEmail = await userModel.getUserByCalendarResourceId(resourceId);
     if (!userEmail) {
@@ -132,6 +172,7 @@ exports.calendarWebhook = async (req, res) => {
             await calendarServiceJWT.processarEventoCalendarJWT(event, userEmail, calendarId);
           } catch (error) {
             console.error('Erro ao processar evento do Calendar:', error.message);
+            // Não re-throw para evitar loops infinitos
           }
         }
       } else {

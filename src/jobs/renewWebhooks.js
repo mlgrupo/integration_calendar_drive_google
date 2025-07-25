@@ -45,5 +45,10 @@ exports.scheduleWebhookRenewal = (runImmediately = false) => {
 
 // Iniciar agendamento
 exports.initScheduledJobs = () => {
-  exports.scheduleWebhookRenewal(true); // true = executar imediatamente na primeira vez
+  // Desabilitar execução imediata temporariamente para parar o spam
+  console.log('⏸️ Execução imediata de webhooks desabilitada temporariamente');
+  console.log('🔄 Agendamento configurado para rodar a cada 6 dias às 2h');
+  
+  // Apenas agendar, sem executar imediatamente
+  exports.scheduleWebhookRenewal(false); // false = não executar imediatamente
 }; 
