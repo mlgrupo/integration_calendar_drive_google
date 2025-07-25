@@ -56,4 +56,7 @@ router.post('/corrigir-constraints-icaluid', calendarController.corrigirConstrai
 // Rota para remover constraint problemática do icaluid
 router.post('/remover-constraint-icaluid', calendarController.removerConstraintIcaluid);
 
+// Rota para verificar e corrigir todas as constraints
+router.post('/verificar-corrigir-constraints', calendarController.verificarECorrigirConstraints);
+
 module.exports = router; 
