@@ -97,3 +97,56 @@ exports.registrarWebhookCalendarJWT = async (email, calendarId, webhookUrl) => {
     throw error;
   }
 }; 
+
+// Processar evento individual do Calendar via webhook
+exports.processarEventoCalendarJWT = async (evento, userEmail, calendarId) => {
+  try {
+    // Buscar usuário no banco
+    const usuario = await userModel.getUserByEmail(userEmail);
+    if (!usuario) {
+      console.warn(`Usuário não encontrado: ${userEmail}`);
+      return;
+    }
+
+    // Verificar se é reunião
+    const isReuniao = evento.conferenceData || 
+      (evento.description && evento.description.toLowerCase().includes('meet')) ||
+      (evento.description && evento.description.toLowerCase().includes('zoom'));
+
+    // Buscar informações do calendário
+    const calendar = await getCalendarClient(userEmail);
+    const calendarInfo = await calendar.calendarList.get({ calendarId });
+    const calendarName = calendarInfo.data.summary || calendarId;
+
+    // Salvar/atualizar evento no banco
+    await calendarEventModel.upsertEvent({
+      usuario_id: usuario.id,
+      event_id: evento.id,
+      titulo: evento.summary || (isReuniao ? 'Reunião sem título' : 'Evento sem título'),
+      descricao: evento.description || null,
+      localizacao: evento.location || null,
+      data_inicio: evento.start?.dateTime ? new Date(evento.start.dateTime) : null,
+      data_fim: evento.end?.dateTime ? new Date(evento.end.dateTime) : null,
+      duracao_minutos: evento.start?.dateTime && evento.end?.dateTime ? 
+        Math.round((new Date(evento.end.dateTime) - new Date(evento.start.dateTime)) / (1000 * 60)) : null,
+      recorrente: !!evento.recurrence,
+      recorrencia: evento.recurrence ? evento.recurrence.join(';') : null,
+      calendario_id: calendarId,
+      calendario_nome: calendarName,
+      status: evento.status || 'confirmed',
+      visibilidade: evento.visibility || 'default',
+      transparencia: evento.transparency || 'opaque',
+      convidados: evento.attendees ? JSON.stringify(evento.attendees) : null,
+      organizador_email: evento.organizer?.email || null,
+      organizador_nome: evento.organizer?.displayName || null,
+      criado_em: evento.created ? new Date(evento.created) : null,
+      modificado_em: evento.updated ? new Date(evento.updated) : null,
+      dados_completos: evento
+    });
+
+    console.log(`✅ Evento processado: ${evento.summary || 'Sem título'} (${isReuniao ? 'Reunião' : 'Evento'})`);
+  } catch (error) {
+    console.error('Erro ao processar evento do Calendar:', error.message);
+    throw error;
+  }
+}; 
