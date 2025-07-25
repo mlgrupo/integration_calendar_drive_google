@@ -41,32 +41,24 @@ exports.renovarWebhooksAutomaticamente = async () => {
           );
         }
 
-        // Renovar webhooks do Calendar (todos os calendários)
-        const { getCalendarClient } = require('../config/googleJWT');
-        const calendar = await getCalendarClient(usuario.email);
-        const calendarsResponse = await calendar.calendarList.list();
-        const calendars = calendarsResponse.data.items || [];
-
-        for (const cal of calendars) {
-          try {
-            const calendarResult = await calendarServiceJWT.registrarWebhookCalendarJWT(
+        // Renovar webhook do Calendar (primary calendar)
+        try {
+          const calendarResult = await calendarServiceJWT.registrarWebhookCalendarJWT(
+            usuario.email, 
+            `${webhookUrl}/calendar`
+          );
+          
+          // Salvar canal do Calendar
+          if (calendarResult.resourceId) {
+            await userModel.saveCalendarChannel(
               usuario.email, 
-              cal.id, 
-              `${webhookUrl}/calendar`
+              calendarResult.resourceId, 
+              calendarResult.id, 
+              'primary'
             );
-            
-            // Salvar canal do Calendar
-            if (calendarResult.resourceId) {
-              await userModel.saveCalendarChannel(
-                usuario.email, 
-                calendarResult.resourceId, 
-                calendarResult.id, 
-                cal.id
-              );
-            }
-          } catch (calendarError) {
-            console.warn(`⚠️ Erro ao configurar webhook do Calendar ${cal.id}:`, calendarError.message);
           }
+        } catch (calendarError) {
+          console.warn(`⚠️ Erro ao configurar webhook do Calendar:`, calendarError.message);
         }
 
         sucessos++;

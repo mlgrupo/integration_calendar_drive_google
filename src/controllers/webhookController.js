@@ -313,14 +313,19 @@ exports.driveWebhook = async (req, res) => {
   }
 };
 
-// Webhook do Calendar - SEM CACHE DE WEBHOOK
+// Webhook do Calendar - COM DEBOUNCE E LOGS DETALHADOS (REPLICANDO DRIVE)
 exports.calendarWebhook = async (req, res) => {
   try {
-    console.log('=== WEBHOOK CALENDAR RECEBIDO ===');
-    
     const resourceId = req.headers['x-goog-resource-id'];
     const channelId = req.headers['x-goog-channel-id'];
     const resourceState = req.headers['x-goog-resource-state'];
+    const messageNumber = req.headers['x-goog-message-number'];
+    
+    console.log(`=== WEBHOOK CALENDAR RECEBIDO ===`);
+    console.log(`ResourceId: ${resourceId}`);
+    console.log(`ChannelId: ${channelId}`);
+    console.log(`ResourceState: ${resourceState}`);
+    console.log(`MessageNumber: ${messageNumber}`);
 
     // SEMPRE responder 200 para o Google (não ignorar webhooks)
     res.status(200).json({ 
@@ -329,12 +334,20 @@ exports.calendarWebhook = async (req, res) => {
       timestamp: new Date().toISOString() 
     });
 
-    // Buscar usuário pelo resourceId do canal
+    // Aplicar debounce para evitar processamento simultâneo
+    if (!debounceWebhook(resourceId, () => {})) {
+      console.log(`⏭️ Webhook ignorado por debounce: ${resourceId}`);
+      return;
+    }
+
+    // Buscar usuário pelo resourceId
     let userEmail = await userModel.getUserByCalendarResourceId(resourceId);
     if (!userEmail) {
       userEmail = process.env.ADMIN_EMAIL || 'leorosso@reconectaoficial.com.br';
       console.warn('Usuário do resourceId não encontrado, usando admin:', userEmail);
     }
+    
+    console.log(`👤 Processando para usuário: ${userEmail}`);
 
     const { getCalendarClient } = require('../config/googleJWT');
     const calendar = await getCalendarClient(userEmail);
@@ -345,11 +358,14 @@ exports.calendarWebhook = async (req, res) => {
       [resourceId]
     );
     const calendarId = rows[0]?.calendar_id || 'primary';
+    console.log(`📅 CalendarId: ${calendarId}`);
 
-    // Buscar eventos modificados recentemente (últimas 4 horas)
+    // Buscar eventos modificados recentemente (últimas 24 horas)
     const now = new Date();
-    const timeMin = new Date(now.getTime() - (4 * 60 * 60 * 1000)); // Últimas 4 horas
+    const timeMin = new Date(now.getTime() - (24 * 60 * 60 * 1000)); // Últimas 24 horas
     const timeMax = new Date(now.getTime() + (7 * 24 * 60 * 60 * 1000)); // Próximos 7 dias
+
+    console.log(`🔍 Buscando eventos de ${timeMin.toISOString()} até ${timeMax.toISOString()}`);
 
     try {
       const events = await calendar.events.list({
@@ -365,12 +381,16 @@ exports.calendarWebhook = async (req, res) => {
         
         let eventosProcessados = 0;
         let eventosIgnorados = 0;
+        let eventosTriviais = 0;
         
         for (const event of events.data.items) {
           try {
+            console.log(`  📋 Evento: ${event.id} - Summary: ${event.summary} - Updated: ${event.updated}`);
+            
             // Verificar se este evento específico já foi processado recentemente
             const eventKey = `${resourceId}-${event.id}-${event.updated}`;
             if (isChangeProcessed(eventKey, resourceId)) {
+              console.log(`    ⏭️ Já processado, ignorando`);
               eventosIgnorados++;
               continue;
             }
@@ -383,21 +403,76 @@ exports.calendarWebhook = async (req, res) => {
             );
             
             if (isSignificantEvent) {
-              console.log(`✅ Evento significativo: ${event.summary || event.id}`);
+              console.log(`    ✅ Evento significativo detectado: ${event.summary || event.id}`);
               await calendarServiceJWT.processarEventoCalendarJWT(event, userEmail, calendarId);
               eventosProcessados++;
             } else {
-              console.log(`⚠️ Evento não significativo ignorado: ${event.id}`);
-              eventosIgnorados++;
+              console.log(`    🔍 Evento trivial, ignorando`);
+              eventosTriviais++;
             }
           } catch (error) {
             console.error('Erro ao processar evento do Calendar:', error.message);
           }
         }
         
-        console.log(`📊 Calendar: ${eventosProcessados} processados, ${eventosIgnorados} ignorados`);
+        console.log(`📊 Calendar: ${eventosProcessados} processados, ${eventosIgnorados} ignorados, ${eventosTriviais} triviais`);
       } else {
-        console.log('⚠️ Nenhum evento modificado recentemente encontrado no Calendar');
+        console.log(`⚠️ Nenhum evento encontrado no Calendar para o período especificado`);
+        
+        // 🔧 SOLUÇÃO: Forçar sincronização completa quando não encontra eventos
+        console.log(`🔄 Forçando sincronização completa do Calendar...`);
+        
+        try {
+          // Buscar todos os calendários do usuário
+          let calendarsResponse;
+          try {
+            calendarsResponse = await calendar.calendarList.list();
+          } catch (err) {
+            console.error(`Erro ao buscar calendarList do usuário ${userEmail}:`, err.message);
+            return;
+          }
+          
+          if (!calendarsResponse || !calendarsResponse.data || !Array.isArray(calendarsResponse.data.items)) {
+            console.warn(`Nenhum calendário encontrado para ${userEmail}`);
+            return;
+          }
+          
+          const calendars = calendarsResponse.data.items;
+          console.log(`📅 Encontrados ${calendars.length} calendários para sincronização completa`);
+          
+          let totalEventos = 0;
+          for (const cal of calendars) {
+            try {
+              const eventsResponse = await calendar.events.list({
+                calendarId: cal.id,
+                timeMin: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString(), // últimos 365 dias
+                maxResults: 1000,
+                singleEvents: true,
+                orderBy: 'startTime'
+              });
+              
+              if (eventsResponse.data.items && eventsResponse.data.items.length > 0) {
+                console.log(`📅 Encontrados ${eventsResponse.data.items.length} eventos no calendário ${cal.summary}`);
+                
+                for (const evento of eventsResponse.data.items) {
+                  try {
+                    console.log(`  📋 Processando evento: ${evento.summary || evento.id}`);
+                    await calendarServiceJWT.processarEventoCalendarJWT(evento, userEmail, cal.id);
+                    totalEventos++;
+                  } catch (error) {
+                    console.error(`Erro ao processar evento ${evento.id}:`, error.message);
+                  }
+                }
+              }
+            } catch (err) {
+              console.error(`Erro ao buscar eventos do calendário ${cal.id}:`, err.message);
+            }
+          }
+          
+          console.log(`✅ Sincronização completa: ${totalEventos} eventos processados`);
+        } catch (syncError) {
+          console.error('❌ Erro na sincronização completa:', syncError.message);
+        }
       }
     } catch (apiError) {
       console.error('❌ Erro ao buscar eventos da API do Calendar:', apiError.message);

@@ -14,4 +14,13 @@ router.post('/sync/:email', calendarController.syncCalendarPorUsuario);
 // Webhook do Calendar
 router.post('/webhook', calendarController.webhookCalendar);
 
+// Configurar webhook do Calendar para todos os usuários
+router.post('/configurar-webhook', calendarController.configurarWebhookCalendar);
+
+// Testar webhook do Calendar
+router.post('/testar-webhook', calendarController.testarWebhookCalendar);
+
+// Rota para forçar sincronização manual do Calendar
+router.post('/forcar-sincronizacao', calendarController.forcarSincronizacaoCalendar);
+
 module.exports = router; 
