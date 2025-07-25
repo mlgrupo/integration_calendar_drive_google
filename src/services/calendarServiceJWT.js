@@ -35,7 +35,7 @@ exports.syncCalendarEventsJWT = async () => {
           try {
             eventsResponse = await calendar.events.list({
               calendarId: cal.id,
-              timeMin: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(), // últimos 30 dias
+              timeMin: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString(), // últimos 365 dias
               maxResults: 1000,
               singleEvents: true,
               orderBy: 'startTime'
@@ -52,6 +52,8 @@ exports.syncCalendarEventsJWT = async () => {
             const isReuniao = evento.conferenceData || 
               (evento.description && evento.description.toLowerCase().includes('meet')) ||
               (evento.description && evento.description.toLowerCase().includes('zoom'));
+            // Log detalhado antes do upsert
+            console.log(`[CalendarSync] Upsert: usuario_id=${usuario.id}, event_id=${evento.id}, icaluid=${evento.iCalUID}, summary=${evento.summary}, updated=${evento.updated}`);
             // Atualizar sempre (upsert)
             await calendarEventModel.upsertEvent({
               usuario_id: usuario.id,
