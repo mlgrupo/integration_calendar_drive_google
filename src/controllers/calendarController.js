@@ -1259,6 +1259,129 @@ const corrigirConstraintsIcaluid = async (req, res) => {
   }
 };
 
+// Remover constraint problemática do icaluid
+const removerConstraintIcaluid = async (req, res) => {
+  try {
+    console.log('🗑️ Removendo constraint problemática do icaluid...');
+    
+    const pool = require('../config/database');
+    
+    // Responder imediatamente
+    res.status(202).json({
+      sucesso: true,
+      mensagem: 'Remoção de constraint iniciada em background',
+      timestamp: new Date().toISOString()
+    });
+
+    // Executar em background
+    setImmediate(async () => {
+      try {
+        // 1. Verificar se a constraint existe
+        const { rows: constraints } = await pool.query(`
+          SELECT 
+            tc.constraint_name,
+            kcu.column_name,
+            tc.constraint_type
+          FROM information_schema.table_constraints tc
+          JOIN information_schema.key_column_usage kcu 
+            ON tc.constraint_name = kcu.constraint_name
+          WHERE tc.table_schema = 'google' 
+            AND tc.table_name = 'calendar_events'
+            AND kcu.column_name = 'icaluid'
+            AND tc.constraint_type = 'UNIQUE'
+        `);
+        
+        console.log('📋 Constraints encontradas no icaluid:', constraints);
+        
+        // 2. Remover todas as constraints únicas do icaluid
+        for (const constraint of constraints) {
+          try {
+            console.log(`🗑️ Removendo constraint: ${constraint.constraint_name}`);
+            await pool.query(`ALTER TABLE google.calendar_events DROP CONSTRAINT "${constraint.constraint_name}"`);
+            console.log(`✅ Constraint removida: ${constraint.constraint_name}`);
+          } catch (error) {
+            console.warn(`⚠️ Erro ao remover constraint ${constraint.constraint_name}:`, error.message);
+          }
+        }
+        
+        // 3. Verificar se ainda existem constraints problemáticas
+        const { rows: constraintsRestantes } = await pool.query(`
+          SELECT 
+            tc.constraint_name,
+            kcu.column_name,
+            tc.constraint_type
+          FROM information_schema.table_constraints tc
+          JOIN information_schema.key_column_usage kcu 
+            ON tc.constraint_name = kcu.constraint_name
+          WHERE tc.table_schema = 'google' 
+            AND tc.table_name = 'calendar_events'
+            AND kcu.column_name = 'icaluid'
+            AND tc.constraint_type = 'UNIQUE'
+        `);
+        
+        if (constraintsRestantes.length === 0) {
+          console.log('✅ Todas as constraints únicas do icaluid foram removidas');
+        } else {
+          console.log('⚠️ Ainda existem constraints únicas do icaluid:', constraintsRestantes);
+        }
+        
+        // 4. Criar constraint composta se não existir
+        const { rows: temConstraintComposta } = await pool.query(`
+          SELECT EXISTS (
+            SELECT 1 FROM information_schema.table_constraints tc
+            JOIN information_schema.key_column_usage kcu 
+              ON tc.constraint_name = kcu.constraint_name
+            WHERE tc.table_schema = 'google' 
+              AND tc.table_name = 'calendar_events'
+              AND tc.constraint_type = 'UNIQUE'
+              AND tc.constraint_name LIKE '%icaluid%'
+          ) as tem_constraint
+        `);
+        
+        if (!temConstraintComposta[0].tem_constraint) {
+          console.log('🔧 Criando constraint única composta (icaluid, usuario_id)...');
+          try {
+            await pool.query(`
+              ALTER TABLE google.calendar_events 
+              ADD CONSTRAINT calendar_events_icaluid_usuario_unique 
+              UNIQUE (icaluid, usuario_id)
+            `);
+            console.log('✅ Constraint única composta criada');
+          } catch (error) {
+            console.warn('⚠️ Erro ao criar constraint composta:', error.message);
+          }
+        }
+        
+        // 5. Verificar constraints finais
+        const { rows: constraintsFinais } = await pool.query(`
+          SELECT 
+            tc.constraint_name,
+            STRING_AGG(kcu.column_name, ', ' ORDER BY kcu.ordinal_position) as columns,
+            tc.constraint_type
+          FROM information_schema.table_constraints tc
+          JOIN information_schema.key_column_usage kcu 
+            ON tc.constraint_name = kcu.constraint_name
+          WHERE tc.table_schema = 'google' 
+            AND tc.table_name = 'calendar_events'
+            AND tc.constraint_type = 'UNIQUE'
+          GROUP BY tc.constraint_name, tc.constraint_type
+          ORDER BY tc.constraint_name
+        `);
+        
+        console.log('📋 Constraints finais:', constraintsFinais);
+        console.log('✅ Remoção de constraint concluída!');
+        
+      } catch (error) {
+        console.error('❌ Erro na remoção de constraint:', error.message);
+      }
+    });
+
+  } catch (error) {
+    console.error('Erro ao iniciar remoção:', error);
+    // Não re-throw pois já respondemos 202
+  }
+};
+
 module.exports = {
   syncCalendar,
   syncCalendarPorUsuario,
@@ -1275,5 +1398,6 @@ module.exports = {
   criarTabelasWebhook,
   verificarEstruturaLogs,
   testarEventosPassados,
-  corrigirConstraintsIcaluid
+  corrigirConstraintsIcaluid,
+  removerConstraintIcaluid
 }; 
