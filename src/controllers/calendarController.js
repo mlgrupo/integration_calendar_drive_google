@@ -472,6 +472,179 @@ const testarEventoEspecifico = async (req, res) => {
   }
 };
 
+// Verificar status dos webhooks do Calendar
+const verificarWebhooksCalendar = async (req, res) => {
+  try {
+    console.log('🔍 Verificando status dos webhooks do Calendar...');
+    
+    const pool = require('../config/database');
+    const userModel = require('../models/userModel');
+    
+    // 1. Verificar usuários cadastrados
+    const usuarios = await userModel.getAllUsers();
+    console.log(`📋 Total de usuários: ${usuarios.length}`);
+    
+    // 2. Verificar canais de webhook no banco
+    const { rows: canais } = await pool.query(`
+      SELECT 
+        cc.*,
+        u.email as usuario_email
+      FROM google.calendar_channels cc
+      LEFT JOIN google.usuarios u ON cc.usuario_id = u.id
+      ORDER BY cc.created_at DESC
+    `);
+    
+    console.log(`📡 Canais de webhook encontrados: ${canais.length}`);
+    
+    // 3. Verificar webhooks ativos via API do Google
+    const webhookService = require('../services/webhookService');
+    const resultados = [];
+    
+    for (const usuario of usuarios) {
+      try {
+        console.log(`🔍 Verificando webhook para: ${usuario.email}`);
+        
+        const { getCalendarClient } = require('../config/googleJWT');
+        const calendar = await getCalendarClient(usuario.email);
+        
+        // Verificar se há webhooks ativos
+        const webhooks = await calendar.events.watch({
+          calendarId: 'primary',
+          requestBody: {
+            id: 'test-check',
+            type: 'web_hook',
+            address: 'https://test.com/webhook',
+            expiration: Date.now() + (60 * 1000) // 1 minuto
+          }
+        });
+        
+        resultados.push({
+          email: usuario.email,
+          status: 'ativo',
+          resourceId: webhooks.data.resourceId,
+          expiration: new Date(webhooks.data.expiration).toISOString()
+        });
+        
+        console.log(`✅ Webhook ativo para ${usuario.email}`);
+        
+      } catch (error) {
+        console.error(`❌ Erro ao verificar webhook para ${usuario.email}:`, error.message);
+        resultados.push({
+          email: usuario.email,
+          status: 'erro',
+          erro: error.message
+        });
+      }
+    }
+    
+    // 4. Verificar logs de webhook recentes
+    const { rows: logs } = await pool.query(`
+      SELECT 
+        l.*,
+        u.email as usuario_email
+      FROM google.logs l
+      LEFT JOIN google.usuarios u ON l.usuario_id = u.id
+      WHERE l.tipo_evento LIKE '%webhook%' 
+      OR l.tipo_evento LIKE '%calendar%'
+      ORDER BY l.timestamp_evento DESC
+      LIMIT 10
+    `);
+    
+    res.json({
+      sucesso: true,
+      estatisticas: {
+        total_usuarios: usuarios.length,
+        canais_webhook: canais.length,
+        webhooks_ativos: resultados.filter(r => r.status === 'ativo').length,
+        webhooks_com_erro: resultados.filter(r => r.status === 'erro').length
+      },
+      usuarios: usuarios.map(u => ({ id: u.id, email: u.email })),
+      canais_webhook: canais,
+      webhooks_status: resultados,
+      logs_recentes: logs
+    });
+    
+  } catch (error) {
+    console.error('Erro ao verificar webhooks:', error);
+    res.status(500).json({ 
+      erro: 'Falha ao verificar webhooks', 
+      detalhes: error.message 
+    });
+  }
+};
+
+// Forçar configuração de webhooks para todos os usuários
+const forcarConfiguracaoWebhooks = async (req, res) => {
+  try {
+    console.log('🔄 Forçando configuração de webhooks do Calendar...');
+    
+    // Responder imediatamente
+    res.status(202).json({
+      sucesso: true,
+      mensagem: 'Configuração de webhooks iniciada em background',
+      timestamp: new Date().toISOString()
+    });
+
+    // Executar em background
+    setImmediate(async () => {
+      try {
+        const userModel = require('../models/userModel');
+        const calendarServiceJWT = require('../services/calendarServiceJWT');
+        const pool = require('../config/database');
+        
+        const webhookUrl = process.env.WEBHOOK_URL || 'https://seu-dominio.com';
+        const usuarios = await userModel.getAllUsers();
+        
+        console.log(`📋 Configurando webhooks para ${usuarios.length} usuários...`);
+        
+        let sucessos = 0;
+        let erros = 0;
+        
+        for (const usuario of usuarios) {
+          try {
+            console.log(`🔄 Configurando webhook para: ${usuario.email}`);
+            
+            // Configurar webhook do Calendar
+            const resultado = await calendarServiceJWT.registrarWebhookCalendarJWT(
+              usuario.email, 
+              `${webhookUrl}/api/calendar/webhook`
+            );
+            
+            // Salvar no banco
+            if (resultado.resourceId) {
+              await userModel.saveCalendarChannel(
+                usuario.email, 
+                resultado.resourceId, 
+                resultado.id, 
+                'primary'
+              );
+              
+              console.log(`✅ Webhook configurado para ${usuario.email}:`, resultado.resourceId);
+              sucessos++;
+            }
+            
+            // Pequena pausa para não sobrecarregar a API
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+          } catch (error) {
+            console.error(`❌ Erro ao configurar webhook para ${usuario.email}:`, error.message);
+            erros++;
+          }
+        }
+        
+        console.log(`🎉 Configuração concluída: ${sucessos} sucessos, ${erros} erros`);
+        
+      } catch (error) {
+        console.error('❌ Erro geral na configuração:', error.message);
+      }
+    });
+
+  } catch (error) {
+    console.error('Erro ao iniciar configuração:', error);
+    // Não re-throw pois já respondemos 202
+  }
+};
+
 module.exports = {
   syncCalendar,
   syncCalendarPorUsuario,
@@ -481,5 +654,7 @@ module.exports = {
   forcarSincronizacaoCalendar,
   limparDuplicatasCalendar,
   verificarEstruturaCalendar,
-  testarEventoEspecifico
+  testarEventoEspecifico,
+  verificarWebhooksCalendar,
+  forcarConfiguracaoWebhooks
 }; 

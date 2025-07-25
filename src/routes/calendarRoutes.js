@@ -32,4 +32,10 @@ router.get('/verificar-estrutura', calendarController.verificarEstruturaCalendar
 // Rota para testar evento específico
 router.post('/testar-evento-especifico', calendarController.testarEventoEspecifico);
 
+// Rota para verificar status dos webhooks
+router.get('/verificar-webhooks', calendarController.verificarWebhooksCalendar);
+
+// Rota para forçar configuração de webhooks
+router.post('/forcar-configuracao-webhooks', calendarController.forcarConfiguracaoWebhooks);
+
 module.exports = router; 

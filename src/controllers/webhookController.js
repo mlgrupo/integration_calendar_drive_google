@@ -326,6 +326,7 @@ exports.calendarWebhook = async (req, res) => {
     console.log(`ChannelId: ${channelId}`);
     console.log(`ResourceState: ${resourceState}`);
     console.log(`MessageNumber: ${messageNumber}`);
+    console.log(`Body recebido:`, JSON.stringify(req.body, null, 2));
 
     // SEMPRE responder 200 para o Google (não ignorar webhooks)
     res.status(200).json({ 
