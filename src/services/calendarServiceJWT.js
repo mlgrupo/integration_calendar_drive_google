@@ -17,24 +17,46 @@ exports.syncCalendarEventsJWT = async () => {
       try {
         const calendar = await getCalendarClient(usuario.email);
         // Buscar todos os calendários do usuário
-        const calendarsResponse = await calendar.calendarList.list();
-        const calendars = calendarsResponse.data.items || [];
+        let calendarsResponse;
+        try {
+          calendarsResponse = await calendar.calendarList.list();
+        } catch (err) {
+          console.error(`Erro ao buscar calendarList do usuário ${usuario.email}:`, err.message);
+          continue;
+        }
+        if (!calendarsResponse || !calendarsResponse.data || !Array.isArray(calendarsResponse.data.items)) {
+          console.warn(`Nenhum calendário encontrado para ${usuario.email}`);
+          continue;
+        }
+        const calendars = calendarsResponse.data.items;
         for (const cal of calendars) {
           // Buscar eventos do calendário
-          const eventsResponse = await calendar.events.list({
-            calendarId: cal.id,
-            timeMin: new Date().toISOString(),
-            maxResults: 1000,
-            singleEvents: true,
-            orderBy: 'startTime'
-          });
+          let eventsResponse;
+          try {
+            eventsResponse = await calendar.events.list({
+              calendarId: cal.id,
+              timeMin: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(), // últimos 30 dias
+              maxResults: 1000,
+              singleEvents: true,
+              orderBy: 'startTime'
+            });
+          } catch (err) {
+            console.error(`Erro ao buscar eventos do calendário ${cal.id} (${cal.summary}) do usuário ${usuario.email}:`, err.message);
+            continue;
+          }
+          if (!eventsResponse || !eventsResponse.data || !Array.isArray(eventsResponse.data.items)) {
+            console.warn(`Nenhum evento encontrado no calendário ${cal.id} (${cal.summary}) para ${usuario.email}`);
+            continue;
+          }
           for (const evento of eventsResponse.data.items) {
             const isReuniao = evento.conferenceData || 
               (evento.description && evento.description.toLowerCase().includes('meet')) ||
               (evento.description && evento.description.toLowerCase().includes('zoom'));
+            // Atualizar sempre (upsert)
             await calendarEventModel.upsertEvent({
               usuario_id: usuario.id,
               event_id: cleanId(evento.id),
+              icaluid: cleanId(evento.iCalUID) || null,
               titulo: evento.summary || (isReuniao ? 'Reunião sem título' : 'Evento sem título'),
               descricao: evento.description || null,
               localizacao: evento.location || null,
@@ -61,7 +83,7 @@ exports.syncCalendarEventsJWT = async () => {
         }
       } catch (userError) {
         console.error(`Erro ao processar usuário ${usuario.email}:`, userError.message);
-        // Continua para o próximo usuário
+        continue;
       }
     }
     console.log(`\n=== Sincronização JWT do Calendar concluída ===`);
