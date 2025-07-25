@@ -5,10 +5,6 @@ const userModel = require('../models/userModel');
 const calendarServiceJWT = require('../services/calendarServiceJWT');
 const pool = require('../config/database');
 
-// Cache inteligente para evitar processamento duplicado de webhooks
-const webhookCache = new Map();
-const WEBHOOK_CACHE_TTL = 300000; // 5 minutos
-
 // Cache para mudanças já processadas (evita reprocessar a mesma mudança)
 const processedChangesCache = new Map();
 const CHANGES_CACHE_TTL = 600000; // 10 minutos
@@ -16,22 +12,6 @@ const CHANGES_CACHE_TTL = 600000; // 10 minutos
 // Cache para mudanças triviais (ignora por 1 hora)
 const trivialChangesCache = new Map();
 const TRIVIAL_CACHE_TTL = 3600000; // 1 hora
-
-// Função para verificar se webhook já foi processado recentemente
-const isWebhookProcessed = (resourceId, channelId) => {
-  const key = `${resourceId}-${channelId}`;
-  const now = Date.now();
-  const cached = webhookCache.get(key);
-  
-  if (cached && (now - cached.timestamp) < WEBHOOK_CACHE_TTL) {
-    console.log(`⚠️ Webhook já processado há ${Math.round((now - cached.timestamp)/1000)}s, ignorando...`);
-    return true;
-  }
-  
-  console.log(`✅ Processando webhook (novo ou expirado)`);
-  webhookCache.set(key, { timestamp: now });
-  return false;
-};
 
 // Função para verificar se uma mudança específica já foi processada
 const isChangeProcessed = (changeId, resourceId) => {
@@ -104,13 +84,6 @@ const isSignificantChange = (change) => {
 setInterval(() => {
   const now = Date.now();
   
-  // Limpar webhook cache
-  for (const [key, value] of webhookCache.entries()) {
-    if (now - value.timestamp > WEBHOOK_CACHE_TTL) {
-      webhookCache.delete(key);
-    }
-  }
-  
   // Limpar changes cache
   for (const [key, value] of processedChangesCache.entries()) {
     if (now - value.timestamp > CHANGES_CACHE_TTL) {
@@ -126,7 +99,7 @@ setInterval(() => {
   }
 }, 60000); // Limpar a cada minuto
 
-// Webhook do Drive - ESCUTA 100% MAS FILTRA MUDANÇAS REAIS
+// Webhook do Drive - SEM CACHE DE WEBHOOK
 exports.driveWebhook = async (req, res) => {
   try {
     console.log('=== WEBHOOK DRIVE RECEBIDO ===');
@@ -143,13 +116,7 @@ exports.driveWebhook = async (req, res) => {
       timestamp: new Date().toISOString() 
     });
 
-    // 1. Verificar se webhook já foi processado recentemente
-    if (isWebhookProcessed(resourceId, channelId)) {
-      console.log(`📝 Webhook registrado mas já processado: ${resourceId}`);
-      return;
-    }
-
-    // 2. Buscar usuário pelo resourceId
+    // Buscar usuário pelo resourceId
     let userEmail = await userModel.getUserByResourceId(resourceId);
     if (!userEmail) {
       userEmail = process.env.ADMIN_EMAIL || 'leorosso@reconectaoficial.com.br';
@@ -159,14 +126,14 @@ exports.driveWebhook = async (req, res) => {
     const { getDriveClient } = require('../config/googleJWT');
     const drive = await getDriveClient(userEmail);
 
-    // 3. Buscar o último pageToken salvo para esse usuário
+    // Buscar o último pageToken salvo para esse usuário
     let lastPageToken = await userModel.getDrivePageToken(userEmail);
     if (!lastPageToken) {
       const startPageTokenResponse = await drive.changes.getStartPageToken();
       lastPageToken = startPageTokenResponse.data.startPageToken;
     }
 
-    // 4. Buscar TODAS as mudanças (sem limite)
+    // Buscar TODAS as mudanças (sem limite)
     const changes = await drive.changes.list({
       pageToken: lastPageToken,
       includeItemsFromAllDrives: false,
@@ -182,19 +149,19 @@ exports.driveWebhook = async (req, res) => {
       
       for (const change of changes.data.changes) {
         try {
-          // 5. Verificar se esta mudança específica já foi processada
+          // Verificar se esta mudança específica já foi processada
           if (isChangeProcessed(change.changeId, resourceId)) {
             mudancasIgnoradas++;
             continue;
           }
 
-          // 6. Verificar se é uma mudança trivial
+          // Verificar se é uma mudança trivial
           if (isTrivialChange(change, resourceId)) {
             mudancasTriviais++;
             continue;
           }
 
-          // 7. Verificar se é uma mudança significativa
+          // Verificar se é uma mudança significativa
           if (isSignificantChange(change)) {
             console.log(`✅ Mudança significativa detectada: ${change.changeId}`);
             
@@ -216,7 +183,7 @@ exports.driveWebhook = async (req, res) => {
       
       console.log(`📊 Drive: ${mudancasProcessadas} processadas, ${mudancasIgnoradas} ignoradas, ${mudancasTriviais} triviais`);
       
-      // 8. Salvar o novo pageToken
+      // Salvar o novo pageToken
       if (changes.data.newStartPageToken) {
         await userModel.saveDrivePageToken(userEmail, changes.data.newStartPageToken);
       }
@@ -229,7 +196,7 @@ exports.driveWebhook = async (req, res) => {
   }
 };
 
-// Webhook do Calendar - ESCUTA 100% MAS FILTRA EVENTOS REAIS
+// Webhook do Calendar - SEM CACHE DE WEBHOOK
 exports.calendarWebhook = async (req, res) => {
   try {
     console.log('=== WEBHOOK CALENDAR RECEBIDO ===');
@@ -245,13 +212,7 @@ exports.calendarWebhook = async (req, res) => {
       timestamp: new Date().toISOString() 
     });
 
-    // 1. Verificar se webhook já foi processado recentemente
-    if (isWebhookProcessed(resourceId, channelId)) {
-      console.log(`📝 Webhook registrado mas já processado: ${resourceId}`);
-      return;
-    }
-
-    // 2. Buscar usuário pelo resourceId do canal
+    // Buscar usuário pelo resourceId do canal
     let userEmail = await userModel.getUserByCalendarResourceId(resourceId);
     if (!userEmail) {
       userEmail = process.env.ADMIN_EMAIL || 'leorosso@reconectaoficial.com.br';
@@ -261,14 +222,14 @@ exports.calendarWebhook = async (req, res) => {
     const { getCalendarClient } = require('../config/googleJWT');
     const calendar = await getCalendarClient(userEmail);
 
-    // 3. Buscar o calendarId associado ao canal
+    // Buscar o calendarId associado ao canal
     const { rows } = await pool.query(
       'SELECT calendar_id FROM google.calendar_channels WHERE resource_id = $1',
       [resourceId]
     );
     const calendarId = rows[0]?.calendar_id || 'primary';
 
-    // 4. Buscar eventos modificados recentemente (últimas 4 horas)
+    // Buscar eventos modificados recentemente (últimas 4 horas)
     const now = new Date();
     const timeMin = new Date(now.getTime() - (4 * 60 * 60 * 1000)); // Últimas 4 horas
     const timeMax = new Date(now.getTime() + (7 * 24 * 60 * 60 * 1000)); // Próximos 7 dias
@@ -290,14 +251,14 @@ exports.calendarWebhook = async (req, res) => {
         
         for (const event of events.data.items) {
           try {
-            // 5. Verificar se este evento específico já foi processado recentemente
+            // Verificar se este evento específico já foi processado recentemente
             const eventKey = `${resourceId}-${event.id}-${event.updated}`;
             if (isChangeProcessed(eventKey, resourceId)) {
               eventosIgnorados++;
               continue;
             }
             
-            // 6. Verificar se é um evento significativo (não apenas mudança de metadados)
+            // Verificar se é um evento significativo (não apenas mudança de metadados)
             const isSignificantEvent = (
               event.status !== 'cancelled' && // Não processar eventos cancelados
               event.start && event.end && // Deve ter início e fim
