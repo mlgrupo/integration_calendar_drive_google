@@ -36,7 +36,29 @@ BEGIN
     END LOOP;
 END $$;
 
--- 3. Garantir que a constraint principal (event_id, usuario_id) existe
+-- 3. Remover índices únicos problemáticos do icaluid
+DROP INDEX IF EXISTS google.idx_calendar_events_unique_icaluid;
+DROP INDEX IF EXISTS idx_calendar_events_unique_icaluid;
+
+DO $$
+DECLARE
+    index_name text;
+BEGIN
+    -- Remover todos os índices únicos que contenham icaluid
+    FOR index_name IN 
+        SELECT indexname 
+        FROM pg_indexes 
+        WHERE tablename = 'calendar_events' 
+        AND schemaname = 'google'
+        AND indexname LIKE '%icaluid%'
+        AND indexdef LIKE '%UNIQUE%'
+    LOOP
+        EXECUTE 'DROP INDEX IF EXISTS google.' || index_name;
+        RAISE NOTICE '🗑️ Removido índice único problemático: %', index_name;
+    END LOOP;
+END $$;
+
+-- 4. Garantir que a constraint principal (event_id, usuario_id) existe
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -55,7 +77,7 @@ BEGIN
     END IF;
 END $$;
 
--- 4. Criar índices úteis
+-- 5. Criar índices úteis
 CREATE INDEX IF NOT EXISTS idx_calendar_events_icaluid 
 ON google.calendar_events (icaluid) WHERE icaluid IS NOT NULL;
 
@@ -65,7 +87,7 @@ ON google.calendar_events (data_inicio);
 CREATE INDEX IF NOT EXISTS idx_calendar_events_usuario_data 
 ON google.calendar_events (usuario_id, data_inicio);
 
--- 5. Mostrar status final
+-- 6. Mostrar status final
 SELECT 
     'Status da tabela calendar_events:' as info,
     COUNT(*) as total_eventos,
@@ -75,7 +97,7 @@ SELECT
     COUNT(*) FILTER (WHERE icaluid IS NULL OR icaluid = '') as eventos_sem_icaluid
 FROM google.calendar_events;
 
--- 6. Mostrar constraints atuais
+-- 7. Mostrar constraints atuais
 SELECT 
     'Constraints atuais:' as info,
     conname as constraint_name,

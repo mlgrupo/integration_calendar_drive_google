@@ -5,8 +5,14 @@
 Erro ao processar evento: there is no unique or exclusion constraint matching the ON CONFLICT specification
 ```
 
+**E também:**
+```
+error: duplicate key value violates unique constraint "idx_calendar_events_icaluid"
+```
+
 ## Causa
-O código estava tentando usar `ON CONFLICT (icaluid, usuario_id)` mas essa constraint não existia na tabela `calendar_events`.
+1. O código estava tentando usar `ON CONFLICT (icaluid, usuario_id)` mas essa constraint não existia na tabela `calendar_events`.
+2. Existia um índice único em `icaluid` que causava conflitos quando o mesmo evento era compartilhado entre usuários.
 
 ## Solução Implementada
 
@@ -25,10 +31,18 @@ O código estava tentando usar `ON CONFLICT (icaluid, usuario_id)` mas essa cons
 - **Funcionalidade**: 
   - Adiciona coluna `icaluid` se não existir
   - Remove constraints problemáticas
+  - **Remove índices únicos problemáticos do icaluid**
   - Garante que a constraint principal existe
-  - Cria índices úteis
+  - Cria índices úteis (não únicos)
 
-### 4. ✅ Script de Teste
+### 4. ✅ Tratamento de Erro Robusto
+- **Arquivo**: `src/models/calendarEventModel.js`
+- **Funcionalidade**: 
+  - Detecta erros de índice único em icaluid
+  - Tenta atualizar evento existente ou inserir sem icaluid
+  - Recuperação automática de falhas
+
+### 5. ✅ Script de Teste
 - **Arquivo**: `src/scripts/test_calendar_upsert.js`
 - **Funcionalidade**: Testa se o upsert está funcionando corretamente
 
@@ -79,9 +93,13 @@ CREATE TABLE google.calendar_events (
 
 ## Índices Criados
 
-- `idx_calendar_events_icaluid` - Para busca por iCalUID
+- `idx_calendar_events_icaluid` - Para busca por iCalUID (NÃO único)
 - `idx_calendar_events_data_inicio` - Para busca por data
 - `idx_calendar_events_usuario_data` - Para busca por usuário e data
+
+## Índices Removidos
+
+- `idx_calendar_events_unique_icaluid` - ❌ Removido (causava conflitos)
 
 ## Resumo
 
