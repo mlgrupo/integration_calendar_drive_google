@@ -113,7 +113,7 @@ exports.verificarStatusWebhooks = async () => {
         ativo: usuario.ativo,
         ultima_sincronizacao: usuario.ultima_sincronizacao,
         webhook_drive: 'Ativo',
-        webhook_calendar: 'Desativado (temporariamente)'
+        webhook_calendar: 'Ativo'
       });
     }
 
@@ -122,27 +122,22 @@ exports.verificarStatusWebhooks = async () => {
     console.error('Erro ao verificar status dos webhooks:', error);
     throw error;
   }
-}; 
+};
 
-// Agendamento automático de renovação de webhooks a cada 6 horas
-function startWebhookRenewalScheduler() {
-  cron.schedule('0 */6 * * *', async () => {
+// Função para iniciar agendamento (removida do carregamento automático)
+exports.startWebhookRenewalScheduler = () => {
+  // Agendamento automático de renovação de webhooks a cada 6 dias
+  cron.schedule('0 2 */6 * *', async () => {
     console.log('⏰ Iniciando renovação automática de webhooks (agendado)...');
     try {
       await exports.renovarWebhooksAutomaticamente();
     } catch (error) {
       console.error('Erro na renovação automática agendada:', error.message);
     }
+  }, {
+    scheduled: true,
+    timezone: 'America/Sao_Paulo'
   });
-  // Rodar imediatamente ao iniciar
-  (async () => {
-    try {
-      await exports.renovarWebhooksAutomaticamente();
-    } catch (error) {
-      console.error('Erro na renovação automática inicial:', error.message);
-    }
-  })();
-}
-
-// Iniciar agendamento ao carregar o serviço
-startWebhookRenewalScheduler(); 
+  
+  console.log('🔄 Agendamento de renovação de webhooks configurado (a cada 6 dias às 2h)');
+}; 

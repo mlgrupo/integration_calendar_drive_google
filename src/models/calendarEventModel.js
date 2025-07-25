@@ -31,8 +31,9 @@ exports.upsertEvent = async (eventData) => {
          status, visibilidade, transparencia, convidados, organizador_email,
          organizador_nome, criado_em, modificado_em, dados_completos)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
-       ON CONFLICT (event_id, usuario_id) DO UPDATE SET
-         icaluid = EXCLUDED.icaluid,
+       ON CONFLICT (icaluid) DO UPDATE SET
+         usuario_id = EXCLUDED.usuario_id,
+         event_id = EXCLUDED.event_id,
          titulo = EXCLUDED.titulo,
          descricao = EXCLUDED.descricao,
          localizacao = EXCLUDED.localizacao,
