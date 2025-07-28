@@ -3,6 +3,7 @@ const { getGoogleClient } = require('../config/google');
 const userModel = require('../models/userModel');
 const calendarEventModel = require('../models/calendarEventModel');
 const logModel = require('../models/logModel');
+const pool = require('../config/database');
 const axios = require('axios');
 const jwt = require('jsonwebtoken');
 // Trocar para variáveis de ambiente
@@ -92,13 +93,13 @@ exports.syncCalendarEvents = async (onFinish) => {
               // Lógica para evitar duplicados: verifica por event_id OU iCalUID para o usuário
               let existe = false;
               if (dadosEvento.iCalUID) {
-                const { rows } = await calendarEventModel.pool.query(
+                const { rows } = await pool.query(
                   'SELECT 1 FROM google.calendar_events WHERE usuario_id = $1 AND (event_id = $2 OR dados_completos->>\'iCalUID\' = $3) LIMIT 1',
                   [dadosEvento.usuario_id, dadosEvento.event_id, dadosEvento.iCalUID]
                 );
                 existe = rows.length > 0;
               } else {
-                const { rows } = await calendarEventModel.pool.query(
+                const { rows } = await pool.query(
                   'SELECT 1 FROM google.calendar_events WHERE usuario_id = $1 AND event_id = $2 LIMIT 1',
                   [dadosEvento.usuario_id, dadosEvento.event_id]
                 );

@@ -108,7 +108,7 @@ const testarWebhookCalendar = async (req, res) => {
 const syncCalendarPorUsuario = async (req, res) => {
   try {
     const { email } = req.params;
-    const resultado = await calendarService.syncCalendarEvents(email);
+    const resultado = await calendarServiceJWT.syncCalendarEventsJWTForUser(email);
     res.json({ sucesso: true, resultado });
   } catch (error) {
     res.status(500).json({ erro: 'Falha ao sincronizar Calendar do usuário', detalhes: error.message });

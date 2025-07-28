@@ -293,6 +293,129 @@ exports.processarEventoCalendarJWT = async (evento, userEmail, calendarId = 'pri
   }
 };
 
+// Sincronizar eventos do Calendar para um usuário específico usando JWT
+exports.syncCalendarEventsJWTForUser = async (email) => {
+  try {
+    console.log(`Iniciando sincronização JWT do Calendar para usuário: ${email}`);
+    
+    // Buscar usuário específico
+    const usuario = await userModel.getUserByEmail(email);
+    if (!usuario) {
+      throw new Error(`Usuário não encontrado: ${email}`);
+    }
+
+    let totalEventos = 0;
+    let totalReunioes = 0;
+
+    console.log(`\n=== Processando usuário: ${usuario.email} ===`);
+    
+    const calendar = await getCalendarClient(usuario.email);
+    
+    // Buscar todos os calendários do usuário
+    let calendarsResponse;
+    try {
+      calendarsResponse = await calendar.calendarList.list();
+    } catch (err) {
+      console.error(`Erro ao buscar calendarList do usuário ${usuario.email}:`, err.message);
+      throw err;
+    }
+    
+    if (!calendarsResponse || !calendarsResponse.data || !Array.isArray(calendarsResponse.data.items)) {
+      console.warn(`Nenhum calendário encontrado para ${usuario.email}`);
+      return { totalEventos: 0, totalReunioes: 0, totalUsuarios: 1 };
+    }
+    
+    const calendars = calendarsResponse.data.items;
+    console.log(`📅 Encontrados ${calendars.length} calendários para ${usuario.email}`);
+    
+    for (const cal of calendars) {
+      console.log(`📅 Processando calendário: ${cal.summary} (${cal.id})`);
+      
+      // Buscar eventos do calendário
+      let eventsResponse;
+      try {
+        // Calcular período: 1 mês para trás e 1 mês para frente
+        const now = new Date();
+        const oneMonthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000); // 30 dias atrás
+        const oneMonthAhead = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 dias à frente
+        
+        eventsResponse = await calendar.events.list({
+          calendarId: cal.id,
+          timeMin: oneMonthAgo.toISOString(),
+          timeMax: oneMonthAhead.toISOString(),
+          maxResults: 1000,
+          singleEvents: true,
+          orderBy: 'startTime'
+        });
+      } catch (err) {
+        console.error(`Erro ao buscar eventos do calendário ${cal.id} (${cal.summary}) do usuário ${usuario.email}:`, err.message);
+        continue;
+      }
+      
+      if (!eventsResponse || !eventsResponse.data || !Array.isArray(eventsResponse.data.items)) {
+        console.warn(`Nenhum evento encontrado no calendário ${cal.id} (${cal.summary}) para ${usuario.email}`);
+        continue;
+      }
+      
+      console.log(`📅 Encontrados ${eventsResponse.data.items.length} eventos no calendário ${cal.summary}`);
+      
+      for (const evento of eventsResponse.data.items) {
+        try {
+          const isReuniao = evento.conferenceData || 
+            (evento.description && evento.description.toLowerCase().includes('meet')) ||
+            (evento.description && evento.description.toLowerCase().includes('zoom'));
+          
+          // Log detalhado antes do upsert
+          console.log(`[CalendarSync] Upsert: usuario_id=${usuario.id}, event_id=${evento.id}, icaluid=${evento.iCalUID}, summary=${evento.summary}, updated=${evento.updated}`);
+          
+          // Atualizar sempre (upsert)
+          await calendarEventModel.upsertEvent({
+            usuario_id: usuario.id,
+            event_id: cleanId(evento.id),
+            icaluid: cleanId(evento.iCalUID) || null,
+            titulo: evento.summary || (isReuniao ? 'Reunião sem título' : 'Evento sem título'),
+            descricao: evento.description || null,
+            localizacao: evento.location || null,
+            data_inicio: converterParaSP(evento.start?.dateTime),
+            data_fim: converterParaSP(evento.end?.dateTime),
+            duracao_minutos: evento.start?.dateTime && evento.end?.dateTime ? 
+              Math.round((new Date(evento.end.dateTime) - new Date(evento.start.dateTime)) / (1000 * 60)) : null,
+            recorrente: !!evento.recurrence,
+            recorrencia: evento.recurrence ? evento.recurrence.join(';') : null,
+            calendario_id: cal.id,
+            calendario_nome: cal.summary,
+            status: evento.status || 'confirmed',
+            visibilidade: evento.visibility || 'default',
+            transparencia: evento.transparency || 'opaque',
+            convidados: evento.attendees ? JSON.stringify(evento.attendees) : null,
+            organizador_email: evento.organizer?.email || null,
+            organizador_nome: evento.organizer?.displayName || null,
+            criado_em: evento.created ? new Date(evento.created) : null,
+            modificado_em: evento.updated ? new Date(evento.updated) : null,
+            dados_completos: evento
+          });
+          
+          if (isReuniao) {
+            totalReunioes++;
+          } else {
+            totalEventos++;
+          }
+          
+          console.log(`✅ Evento processado: ${evento.summary || evento.id}`);
+        } catch (eventError) {
+          console.error(`Erro ao processar evento ${evento.id}:`, eventError.message);
+        }
+      }
+    }
+    
+    console.log(`\n🎉 Sincronização concluída para ${usuario.email}: Eventos: ${totalEventos}, Reuniões: ${totalReunioes}`);
+    return { totalEventos, totalReunioes, totalUsuarios: 1 };
+  } catch (error) {
+    console.error('❌ Erro ao sincronizar eventos do usuário:', error);
+    throw error;
+  }
+};
+
 // Marcar evento como deletado no banco
 exports.marcarEventoComoDeletado = async (eventId, userEmail) => {
   try {
