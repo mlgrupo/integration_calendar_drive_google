@@ -147,7 +147,7 @@ const mostrarStatusCaches = () => {
   console.log(`  - Webhook Debounce: ${webhookDebounce.size}`);
 };
 
-// Webhook do Drive - COM DEBOUNCE E LOGS DETALHADOS
+// Webhook do Drive - APENAS SHARED DRIVES
 exports.driveWebhook = async (req, res) => {
   try {
     const resourceId = req.headers['x-goog-resource-id'];
@@ -155,7 +155,7 @@ exports.driveWebhook = async (req, res) => {
     const resourceState = req.headers['x-goog-resource-state'];
     const messageNumber = req.headers['x-goog-message-number'];
     
-    console.log(`=== WEBHOOK DRIVE RECEBIDO ===`);
+    console.log(`=== WEBHOOK DRIVE (SHARED DRIVES) RECEBIDO ===`);
     console.log(`ResourceId: ${resourceId}`);
     console.log(`ChannelId: ${channelId}`);
     console.log(`ResourceState: ${resourceState}`);
@@ -198,20 +198,21 @@ exports.driveWebhook = async (req, res) => {
       console.log(`📄 Novo startPageToken: ${lastPageToken}`);
     }
 
-    // Buscar mudanças com o pageToken atual
-    console.log(`🔍 Buscando mudanças com pageToken: ${lastPageToken}`);
+    // Buscar mudanças com o pageToken atual (APENAS SHARED DRIVES)
+    console.log(`🔍 Buscando mudanças dos Shared Drives com pageToken: ${lastPageToken}`);
     const changes = await drive.changes.list({
       pageToken: lastPageToken,
-      includeItemsFromAllDrives: false,
-      supportsAllDrives: false
+      includeItemsFromAllDrives: true,
+      supportsAllDrives: true
     });
 
     if (changes.data.changes && changes.data.changes.length > 0) {
-      console.log(`🔍 Analisando ${changes.data.changes.length} mudanças do Drive`);
+      console.log(`🔍 Analisando ${changes.data.changes.length} mudanças dos Shared Drives`);
       
       let mudancasProcessadas = 0;
       let mudancasIgnoradas = 0;
       let mudancasTriviais = 0;
+      let mudancasMeuDrive = 0;
       
       for (const change of changes.data.changes) {
         try {
@@ -231,84 +232,49 @@ exports.driveWebhook = async (req, res) => {
             continue;
           }
 
-          // Verificar se é uma mudança significativa
-          if (isSignificantChange(change)) {
-            console.log(`    ✅ Mudança significativa detectada: ${change.changeId}`);
+          // FILTRAR: Processar apenas mudanças de Shared Drives
+          if (change.file && change.file.driveId) {
+            console.log(`    📁 Mudança em Shared Drive detectada: ${change.file.driveId}`);
             
-            if (change.fileId && change.file) {
-              await driveServiceJWT.processarArquivoDriveJWT(change.file, userEmail);
-              mudancasProcessadas++;
-            } else if (change.fileId && change.removed) {
-              await driveServiceJWT.marcarArquivoComoDeletado(change.fileId, userEmail);
-              mudancasProcessadas++;
+            // Verificar se é uma mudança significativa
+            if (isSignificantChange(change)) {
+              console.log(`    ✅ Mudança significativa em Shared Drive: ${change.changeId}`);
+              
+              if (change.fileId && change.file) {
+                await driveServiceJWT.processarArquivoDriveJWT(change.file, userEmail);
+                mudancasProcessadas++;
+              } else if (change.fileId && change.removed) {
+                await driveServiceJWT.marcarArquivoComoDeletado(change.fileId, userEmail);
+                mudancasProcessadas++;
+              }
+            } else {
+              console.log(`    ⚠️ Mudança não significativa ignorada: ${change.changeId}`);
+              mudancasIgnoradas++;
             }
           } else {
-            console.log(`    ⚠️ Mudança não significativa ignorada: ${change.changeId}`);
-            mudancasIgnoradas++;
+            // Mudança do "Meu Drive" - ignorar
+            console.log(`    🚫 Mudança do Meu Drive ignorada: ${change.changeId}`);
+            mudancasMeuDrive++;
+            continue;
           }
         } catch (error) {
-          console.error('Erro ao processar mudança do Drive:', error.message);
+          console.error('Erro ao processar mudança do Shared Drive:', error.message);
         }
       }
       
-      console.log(`📊 Drive: ${mudancasProcessadas} processadas, ${mudancasIgnoradas} ignoradas, ${mudancasTriviais} triviais`);
-      
-      // Salvar o novo pageToken
-      if (changes.data.newStartPageToken) {
-        console.log(`💾 Salvando novo pageToken: ${changes.data.newStartPageToken}`);
-        await userModel.saveDrivePageToken(userEmail, changes.data.newStartPageToken);
-      }
+      console.log(`📊 Shared Drives: ${mudancasProcessadas} processadas, ${mudancasIgnoradas} ignoradas, ${mudancasTriviais} triviais, ${mudancasMeuDrive} do Meu Drive ignoradas`);
     } else {
-      console.log(`⚠️ Nenhuma mudança encontrada no Drive para pageToken: ${lastPageToken}`);
-      
-      // 🔧 SOLUÇÃO: Forçar sincronização completa quando não encontra mudanças
-      console.log(`🔄 Forçando sincronização completa do Drive...`);
-      
-      try {
-        // Obter um novo startPageToken (força reset)
-        const startPageTokenResponse = await drive.changes.getStartPageToken();
-        const newStartPageToken = startPageTokenResponse.data.startPageToken;
-        console.log(`📄 Novo startPageToken obtido: ${newStartPageToken}`);
-        
-        // Salvar o novo pageToken
-        await userModel.saveDrivePageToken(userEmail, newStartPageToken);
-        
-        // Buscar arquivos modificados recentemente (últimas 24 horas)
-        const now = new Date();
-        const timeMin = new Date(now.getTime() - (24 * 60 * 60 * 1000)); // Últimas 24 horas
-        
-        console.log(`🔍 Buscando arquivos modificados nas últimas 24 horas...`);
-        const files = await drive.files.list({
-          q: `modifiedTime > '${timeMin.toISOString()}'`,
-          fields: 'files(id,name,mimeType,parents,size,modifiedTime,createdTime,trashed,webViewLink)',
-          orderBy: 'modifiedTime desc'
-        });
-        
-        if (files.data.files && files.data.files.length > 0) {
-          console.log(`📁 Encontrados ${files.data.files.length} arquivos modificados recentemente`);
-          
-          let arquivosProcessados = 0;
-          for (const file of files.data.files) {
-            try {
-              console.log(`  📋 Processando arquivo: ${file.name} (${file.id})`);
-              await driveServiceJWT.processarArquivoDriveJWT(file, userEmail);
-              arquivosProcessados++;
-            } catch (error) {
-              console.error(`Erro ao processar arquivo ${file.name}:`, error.message);
-            }
-          }
-          
-          console.log(`✅ Sincronização completa: ${arquivosProcessados} arquivos processados`);
-        } else {
-          console.log(`ℹ️ Nenhum arquivo modificado nas últimas 24 horas encontrado`);
-        }
-        
-      } catch (syncError) {
-        console.error('❌ Erro na sincronização completa:', syncError.message);
-      }
+      console.log(`⚠️ Nenhuma mudança encontrada nos Shared Drives para o período especificado`);
     }
+
+    // Salvar o novo pageToken
+    if (changes.data.newStartPageToken) {
+      await userModel.saveDrivePageToken(userEmail, changes.data.newStartPageToken);
+      console.log(`💾 Novo pageToken salvo: ${changes.data.newStartPageToken}`);
+    }
+
   } catch (error) {
-    console.error('❌ Erro geral ao processar webhook do Drive:', error);
+    console.error('❌ Erro geral ao processar webhook dos Shared Drives:', error);
     // Não re-throw para não quebrar o webhook
   }
 };
@@ -415,11 +381,9 @@ exports.calendarWebhook = async (req, res) => {
                 if (error.code === '42P10' || error.message.includes('ON CONFLICT')) {
                   console.log(`🔧 Tentando resolver erro de constraint para evento ${event.id}...`);
                   try {
-                    // Tentar processar novamente com dados limpos
+                    // Tentar processar novamente sem limpeza de IDs
                     const eventLimpo = {
-                      ...event,
-                      id: event.id ? event.id.toString().split('_')[0] : event.id,
-                      iCalUID: event.iCalUID ? event.iCalUID.toString().split('_')[0] : event.iCalUID
+                      ...event
                     };
                     await calendarServiceJWT.processarEventoCalendarJWT(eventLimpo, userEmail, calendarId);
                     console.log(`✅ Evento ${event.id} processado com sucesso após limpeza`);
@@ -466,9 +430,15 @@ exports.calendarWebhook = async (req, res) => {
           let totalEventos = 0;
           for (const cal of calendars) {
             try {
+              // Calcular período: 1 mês para trás e 1 mês para frente
+              const now = new Date();
+              const oneMonthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000); // 30 dias atrás
+              const oneMonthAhead = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 dias à frente
+              
               const eventsResponse = await calendar.events.list({
                 calendarId: cal.id,
-                timeMin: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString(), // últimos 365 dias
+                timeMin: oneMonthAgo.toISOString(),
+                timeMax: oneMonthAhead.toISOString(),
                 maxResults: 1000,
                 singleEvents: true,
                 orderBy: 'startTime'
@@ -489,11 +459,9 @@ exports.calendarWebhook = async (req, res) => {
                     if (error.code === '42P10' || error.message.includes('ON CONFLICT')) {
                       console.log(`🔧 Tentando resolver erro de constraint para evento ${evento.id}...`);
                       try {
-                        // Tentar processar novamente com dados limpos
+                        // Tentar processar novamente sem limpeza de IDs
                         const eventoLimpo = {
-                          ...evento,
-                          id: evento.id ? evento.id.toString().split('_')[0] : evento.id,
-                          iCalUID: evento.iCalUID ? evento.iCalUID.toString().split('_')[0] : evento.iCalUID
+                          ...evento
                         };
                         await calendarServiceJWT.processarEventoCalendarJWT(eventoLimpo, userEmail, cal.id);
                         console.log(`✅ Evento ${evento.id} processado com sucesso após limpeza`);

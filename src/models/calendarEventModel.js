@@ -69,9 +69,20 @@ exports.upsertEvent = async (eventData) => {
     return result.rows[0];
   } catch (error) {
     console.error('[CalendarModel] ❌ Erro no upsertEvent:', error);
+    console.error('[CalendarModel] 🔍 Detalhes do erro:', {
+      code: error.code,
+      constraint: error.constraint,
+      detail: error.detail,
+      table: error.table,
+      schema: error.schema
+    });
     
     // Se for erro de índice único em icaluid, tentar resolver
-    if (error.code === '23505' && error.constraint && error.constraint.includes('icaluid')) {
+    if (error.code === '23505' && error.constraint && (
+        error.constraint.includes('icaluid') || 
+        error.constraint === 'idx_calendar_events_icaluid' ||
+        error.constraint === 'idx_calendar_events_unique_icaluid'
+    )) {
       console.log(`[CalendarModel] 🔧 Tentando resolver conflito de índice único em icaluid: ${icaluid}`);
       try {
         // Verificar se já existe um evento com este icaluid para este usuário

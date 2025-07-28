@@ -3,45 +3,46 @@ const { DriveFileManager, MIME_TYPES } = require('../services/driveFileManager')
 const logModel = require('../models/logModel');
 const webhookDebug = require('../utils/webhookDebug');
 
-// Sincronizar arquivos e pastas do Drive
+// Sincronizar arquivos e pastas do Drive (APENAS SHARED DRIVES)
 const syncDrive = async (req, res) => {
   try {
-    console.log('Sincronização do Drive agendada (background)...');
+    console.log('Sincronização dos Shared Drives agendada (background)...');
     // Responde imediatamente
-    res.status(202).json({ sucesso: true, mensagem: 'Sincronização do Drive iniciada em background.' });
+    res.status(202).json({ sucesso: true, mensagem: 'Sincronização dos Shared Drives iniciada em background.' });
     // Roda o fluxo em background
     setImmediate(async () => {
       try {
-        const resultado = await driveService.syncDriveFiles();
+        const driveServiceJWT = require('../services/driveServiceJWT');
+        const resultado = await driveServiceJWT.syncDriveFilesJWT();
         await logModel.logAuditoria({
           usuario_id: null,
-          acao: 'sync_drive',
-          recurso_tipo: 'drive',
+          acao: 'sync_shared_drives',
+          recurso_tipo: 'shared_drives',
           recurso_id: 'all_users',
-          detalhes: `Sincronização do Drive executada: ${resultado.totalArquivos} arquivos, ${resultado.totalPastas} pastas`,
+          detalhes: `Sincronização dos Shared Drives executada: ${resultado.totalArquivos} arquivos, ${resultado.totalPastas} pastas`,
           ip_origem: req.ip,
           user_agent: req.get('User-Agent'),
           timestamp_evento: new Date()
         });
-        console.log('Sincronização do Drive finalizada:', resultado);
+        console.log('Sincronização dos Shared Drives finalizada:', resultado);
       } catch (error) {
-        console.error('Erro na sincronização do Drive em background:', error);
+        console.error('Erro na sincronização dos Shared Drives em background:', error);
       }
     });
   } catch (error) {
-    console.error('Erro ao sincronizar Drive:', error);
+    console.error('Erro ao sincronizar Shared Drives:', error);
     res.status(500).json({ 
-      erro: 'Falha ao sincronizar arquivos/pastas do Drive', 
+      erro: 'Falha ao sincronizar arquivos/pastas dos Shared Drives', 
       detalhes: error.message 
     });
   }
 };
 
-// Configurar webhook do Drive para todos os usuários do banco
+// Configurar webhook do Drive para todos os usuários do banco (APENAS SHARED DRIVES)
 const configurarWebhookDrive = async (req, res) => {
   try {
     const userModel = require('../models/userModel');
-    const driveService = require('../services/driveService');
+    const driveServiceJWT = require('../services/driveServiceJWT');
     const webhookUrl = process.env.WEBHOOK_URL ? `${process.env.WEBHOOK_URL}/drive/webhook` : (req.body?.webhookUrl || null);
     if (!webhookUrl) {
       return res.status(400).json({ erro: 'webhookUrl não informado e WEBHOOK_URL não está configurado.' });
@@ -49,17 +50,31 @@ const configurarWebhookDrive = async (req, res) => {
     const usuarios = await userModel.getAllUsers();
     let total = 0;
     let erros = [];
+    let sharedDrivesConfigurados = 0;
+    
+    console.log(`🔄 Configurando webhooks de Shared Drives para ${usuarios.length} usuários...`);
+    
     for (const usuario of usuarios) {
       try {
-        await driveService.configurarWatchDrive(usuario.email, webhookUrl);
+        console.log(`📁 Configurando webhook para: ${usuario.email}`);
+        await driveServiceJWT.registrarWebhookDriveJWT(usuario.email, webhookUrl);
         total++;
+        sharedDrivesConfigurados++;
       } catch (err) {
+        console.error(`❌ Erro ao configurar webhook para ${usuario.email}:`, err.message);
         erros.push({ email: usuario.email, erro: err.message });
       }
     }
-    res.json({ sucesso: true, mensagem: `Webhooks do Drive configurados para ${total} usuários.`, erros });
+    res.json({ 
+      sucesso: true, 
+      mensagem: `Webhooks de Shared Drives configurados para ${total} usuários.`, 
+      totalUsuarios: total,
+      totalSharedDrives: sharedDrivesConfigurados,
+      erros 
+    });
   } catch (error) {
-    res.status(500).json({ erro: 'Falha ao configurar webhooks do Drive', detalhes: error.message });
+    console.error('❌ Erro ao configurar webhooks:', error);
+    res.status(500).json({ erro: 'Falha ao configurar webhooks de Shared Drives', detalhes: error.message });
   }
 };
 
@@ -440,10 +455,15 @@ const forcarSincronizacaoDrive = async (req, res) => {
   }
 };
 
+
+
+
+
 module.exports = {
   syncDrive,
   syncDrivePorUsuario,
   webhookDrive,
   configurarWebhookDrive,
-  forcarSincronizacaoDrive
+  forcarSincronizacaoDrive,
+
 }; 

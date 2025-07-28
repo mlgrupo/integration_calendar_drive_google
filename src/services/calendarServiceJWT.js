@@ -4,23 +4,16 @@ const calendarEventModel = require('../models/calendarEventModel');
 const { v4: uuidv4 } = require('uuid');
 const { converterParaSP } = require('../utils/formatDate');
 
-// Limpar IDs do Calendar (remover timestamps mas preservar IDs que começam com _)
+// Manter IDs do Calendar com timestamp (não limpar)
 function cleanId(id) {
   if (typeof id !== 'string') return id;
   
-  // Se o ID já começa com _, não é um timestamp, então retorna como está
-  if (id.startsWith('_')) {
-    return id;
-  }
-  
-  // Se contém _ e não começa com _, provavelmente tem timestamp
-  if (id.includes('_') && !id.startsWith('_')) {
-    return id.split('_')[0];
-  }
-  
-  // Caso contrário, retorna o ID original
+  // Retorna o ID original sem limpeza (mantém timestamp)
   return id;
 }
+
+// Exportar para testes
+exports.cleanId = cleanId;
 
 // Sincronizar eventos do Calendar para todos os usuários usando JWT
 exports.syncCalendarEventsJWT = async () => {
@@ -59,9 +52,15 @@ exports.syncCalendarEventsJWT = async () => {
           // Buscar eventos do calendário
           let eventsResponse;
           try {
+            // Calcular período: 1 mês para trás e 1 mês para frente
+            const now = new Date();
+            const oneMonthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000); // 30 dias atrás
+            const oneMonthAhead = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 dias à frente
+            
             eventsResponse = await calendar.events.list({
               calendarId: cal.id,
-              timeMin: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString(), // últimos 365 dias
+              timeMin: oneMonthAgo.toISOString(),
+              timeMax: oneMonthAhead.toISOString(),
               maxResults: 1000,
               singleEvents: true,
               orderBy: 'startTime'
